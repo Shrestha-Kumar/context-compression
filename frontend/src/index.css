@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #F4F4F2;
+  --color-surface: #FFFFFF;
+  --color-surface-dim: #E2E2DF;
+  --color-ink: #1A1A1A;
+  --color-ink-light: #555555;
+  --color-ink-lighter: #888888;
+  
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-headline: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-body: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6, p, span, a, button {
+    pointer-events: auto;
+  }
+}
+
+@layer utilities {
+  .bg-surface, .bg-ink, .bg-surface-dim {
+    pointer-events: auto;
+  }
+}
