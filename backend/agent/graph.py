@@ -28,11 +28,10 @@ from langchain_core.messages import (
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import StateGraph, END
 
-from backend.agent.state import AgentState, ConstraintDict, empty_constraints
+from backend.agent.state import AgentState, MemoryState, empty_memory
 from backend.agent.tools import TOOL_MAP
 from backend.agent.inference import InferenceEngine
-from backend.compression.pipeline import CompressionPipeline
-from backend.compression.constraint_extractor import format_constraints_as_prompt
+from backend.compression.pipeline import CompressionPipeline, format_memory_as_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,7 @@ class TravelAgentGraph:
         pipeline: Optional[CompressionPipeline] = None,
     ):
         self.inference = inference_engine
-        self.pipeline = pipeline or CompressionPipeline()
+        self.pipeline = pipeline or CompressionPipeline(inference_engine=inference_engine)
         self._graph = self._build_graph()
 
     # ------------------------------------------------------------------
@@ -188,7 +187,7 @@ class TravelAgentGraph:
         emitter = config.get("configurable", {}).get("emitter", default_emitter)
         
         messages = state.get("messages", [])
-        constraints = state.get("constraints") or empty_constraints()
+        constraints = state.get("memory") or empty_memory()
         turn = state["turn_number"]
 
         # The user's latest message is the "query"
@@ -208,16 +207,17 @@ class TravelAgentGraph:
             user_query=user_query if isinstance(user_query, str) else str(user_query),
         )
 
-        # Emit compression telemetry
-        emitter({
-            "type": "compression_stats",
-            "turn_number": turn,
-            "raw_tokens": result.raw_tokens,
-            "compressed_tokens": result.compressed_tokens,
-            "ratio": round(result.ratio, 3),
-            "tier_used": result.tier_used,
-            "vram_mb": self.inference.vram_allocated_mb(),
-        })
+        # Emit compression telemetry — skip on heuristic bypass to avoid wiping the metrics chart
+        if result.tier_used != "heuristic_bypass" and result.raw_tokens > 0:
+            emitter({
+                "type": "compression_stats",
+                "turn_number": turn,
+                "raw_tokens": result.raw_tokens,
+                "compressed_tokens": result.compressed_tokens,
+                "ratio": round(result.ratio, 3),
+                "tier_used": result.tier_used,
+                "vram_mb": self.inference.vram_allocated_mb(),
+            })
 
         if result.token_scores:
             emitter({
@@ -250,8 +250,25 @@ class TravelAgentGraph:
             "tier_used": result.tier_used,
         }
 
+        # ---------------------------------------------------------------
+        # Accumulate changelog across all turns so the MD export captures
+        # every add/update/delete, not just the last LLM extraction.
+        # ---------------------------------------------------------------
+        new_memory = result.updated_constraints
+        if isinstance(new_memory, dict):
+            prev_changelog = constraints.get("changelog", []) if isinstance(constraints, dict) else []
+            new_changelog = new_memory.get("changelog", [])
+            # Merge: keep all historical entries, append any new ones not already present
+            seen = {(e["date"], e["action"]) for e in prev_changelog}
+            for entry in new_changelog:
+                key = (entry.get("date", ""), entry.get("action", ""))
+                if key not in seen:
+                    prev_changelog.append(entry)
+                    seen.add(key)
+            new_memory["changelog"] = prev_changelog
+
         return {
-            "constraints": result.updated_constraints,
+            "memory": new_memory,
             "last_compressed_prompt": result.compressed_prompt,
             "last_token_scores": result.token_scores,
             "compression_history": state.get("compression_history", []) + [history_entry],
@@ -267,7 +284,7 @@ class TravelAgentGraph:
         emitter = config.get("configurable", {}).get("emitter", default_emitter)
 
         messages = state.get("messages", [])
-        constraints = state.get("constraints") or empty_constraints()
+        constraints = state.get("memory") or empty_memory()
 
         # Prefer the pre-compressed prompt if fresh
         compressed = state.get("last_compressed_prompt")
@@ -277,7 +294,7 @@ class TravelAgentGraph:
             clear_compressed = True
         else:
             # No compression needed this turn; build a simple prompt
-            prefix = format_constraints_as_prompt(constraints)
+            prefix = format_memory_as_prompt(constraints)
             lines = []
             if prefix:
                 lines.append(prefix)
@@ -296,6 +313,7 @@ class TravelAgentGraph:
         result = self.inference.generate(
             prompt=prompt_text,
             system_prompt=SYSTEM_PROMPT_TEMPLATE,
+            use_lora=False
         )
 
         logger.info(f"Model Inference complete! Preparing to emit KV payload...")

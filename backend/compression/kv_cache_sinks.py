@@ -66,22 +66,47 @@ def _slice_dynamic_cache(
     sink_size: int,
 ) -> "DynamicCache":
     """Slicing path for HuggingFace's DynamicCache object."""
-    if len(cache.key_cache) == 0:
-        return cache
+    # Transformers < 4.47 used key_cache/value_cache attributes.
+    # Transformers 4.47+ uses the .layers attribute (list of DynamicLayer).
+    # We use getattr to be safe across both.
+    
+    key_cache = getattr(cache, "key_cache", None)
+    value_cache = getattr(cache, "value_cache", None)
+    layers = getattr(cache, "layers", None)
 
-    # All layers share the same sequence length
-    current_seq_len = cache.key_cache[0].shape[2]
-    if current_seq_len <= window_size:
-        return cache
+    if layers is not None:
+        # Modern path (4.47+)
+        if len(layers) == 0:
+            return cache
+        current_seq_len = layers[0].keys.shape[2]
+        if current_seq_len <= window_size:
+            return cache
+        
+        from transformers.cache_utils import DynamicCache
+        new_cache = DynamicCache()
+        for layer_idx, layer in enumerate(layers):
+            sliced_key, sliced_val = _slice_tensors(layer.keys, layer.values, window_size, sink_size)
+            new_cache.update(sliced_key, sliced_val, layer_idx)
+        return new_cache
 
-    new_cache = DynamicCache()
-    for layer_idx in range(len(cache.key_cache)):
-        key = cache.key_cache[layer_idx]
-        val = cache.value_cache[layer_idx]
-        sliced_key, sliced_val = _slice_tensors(key, val, window_size, sink_size)
-        # Fresh cache needs explicit update() to register the layer
-        new_cache.update(sliced_key, sliced_val, layer_idx)
-    return new_cache
+    elif key_cache is not None:
+        # Legacy path (4.36 - 4.46)
+        if len(key_cache) == 0:
+            return cache
+        current_seq_len = key_cache[0].shape[2]
+        if current_seq_len <= window_size:
+            return cache
+
+        from transformers.cache_utils import DynamicCache
+        new_cache = DynamicCache()
+        for layer_idx in range(len(key_cache)):
+            key = key_cache[layer_idx]
+            val = value_cache[layer_idx]
+            sliced_key, sliced_val = _slice_tensors(key, val, window_size, sink_size)
+            new_cache.update(sliced_key, sliced_val, layer_idx)
+        return new_cache
+
+    return cache
 
 
 def _slice_legacy_tuple_cache(past_key_values, window_size: int, sink_size: int):
@@ -147,13 +172,18 @@ def cache_seq_len(past_key_values) -> int:
     if past_key_values is None:
         return 0
     if HAS_CACHE_OBJ and isinstance(past_key_values, DynamicCache):
-        if len(past_key_values.key_cache) == 0:
-            return 0
-        return past_key_values.key_cache[0].shape[2]
+        layers = getattr(past_key_values, "layers", None)
+        key_cache = getattr(past_key_values, "key_cache", None)
+        
+        if layers is not None and len(layers) > 0:
+            return layers[0].keys.shape[2]
+        if key_cache is not None and len(key_cache) > 0:
+            return key_cache[0].shape[2]
+        return 0
     # Legacy tuple
     try:
         return past_key_values[0][0].shape[2]
-    except (IndexError, AttributeError):
+    except (IndexError, AttributeError, TypeError):
         return 0
 
 
@@ -163,11 +193,23 @@ def cache_vram_mb(past_key_values) -> float:
         return 0.0
     total_bytes = 0
     if HAS_CACHE_OBJ and isinstance(past_key_values, DynamicCache):
-        for k, v in zip(past_key_values.key_cache, past_key_values.value_cache):
-            total_bytes += k.numel() * k.element_size()
-            total_bytes += v.numel() * v.element_size()
+        layers = getattr(past_key_values, "layers", None)
+        key_cache = getattr(past_key_values, "key_cache", None)
+        value_cache = getattr(past_key_values, "value_cache", None)
+
+        if layers is not None:
+            for layer in layers:
+                total_bytes += layer.keys.numel() * layer.keys.element_size()
+                total_bytes += layer.values.numel() * layer.values.element_size()
+        elif key_cache is not None and value_cache is not None:
+            for k, v in zip(key_cache, value_cache):
+                total_bytes += k.numel() * k.element_size()
+                total_bytes += v.numel() * v.element_size()
     else:
-        for k, v in past_key_values:
-            total_bytes += k.numel() * k.element_size()
-            total_bytes += v.numel() * v.element_size()
+        try:
+            for k, v in past_key_values:
+                total_bytes += k.numel() * k.element_size()
+                total_bytes += v.numel() * v.element_size()
+        except (TypeError, ValueError):
+            pass
     return total_bytes / (1024 * 1024)

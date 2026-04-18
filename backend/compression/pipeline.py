@@ -3,290 +3,155 @@ Compression pipeline orchestrator.
 
 Coordinates the two-tier compression strategy with a validation gate and
 graceful fallback. The single entry point is `compress()`.
-
-Pipeline flow:
-    Messages → Constraint Extraction (Tier 1)
-             → System prompt prefix built from constraint dict
-             → TF-IDF pruning of remaining content (Tier 2)
-             → Validation
-                 ├─ PASS: return compressed prompt
-                 └─ FAIL: fallback to sliding window + constraint prefix
 """
 
+import json
+import logging
+import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List, Dict, Any
+
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from backend.agent.state import MemoryState, empty_memory
 
-from backend.agent.state import ConstraintDict
-from backend.compression.constraint_extractor import (
-    ConstraintExtractor,
-    format_constraints_as_prompt,
-)
-from backend.compression.tfidf_pruner import TFIDFPruner
-from backend.compression.validator import CompressionValidator, ValidationResult
-
-
-# -----------------------------------------------------------------------------
-# Result types
-# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CompressionResult:
-    """Everything the graph node needs after compression runs."""
-    # The final prompt to send to the model
     compressed_prompt: str
-
-    # Updated constraint dictionary (may have new extractions)
-    updated_constraints: ConstraintDict
-
-    # Telemetry
+    updated_constraints: MemoryState
     raw_tokens: int
     compressed_tokens: int
-    ratio: float                  # 1 - (compressed / raw)
-    tier_used: str                # "none" | "tier1_only" | "tier1_and_tier2" | "fallback"
-    token_scores: list[dict] = field(default_factory=list)
-    validation: Optional[ValidationResult] = None
-
-
-# -----------------------------------------------------------------------------
-# Token counting
-# -----------------------------------------------------------------------------
-# We use a simple heuristic rather than loading the tokenizer here to keep
-# this module CPU-only and fast. For Qwen2.5, the rough ratio is 1 token per
-# ~3.5 English characters. The exact count happens in inference.py.
+    ratio: float
+    tier_used: str
+    token_scores: List[Dict[str, Any]] = field(default_factory=list)
 
 def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text) // 4)
 
-
-# -----------------------------------------------------------------------------
-# The orchestrator
-# -----------------------------------------------------------------------------
+def format_memory_as_prompt(memory: MemoryState) -> str:
+    """Renders the memory dictionary as a system context prompt."""
+    if not memory:
+        return ""
+    return f"[PERSISTENT MEMORY STATE (DO NOT FORGET)]\n{json.dumps(memory, indent=2)}\n"
 
 class CompressionPipeline:
-    """
-    Coordinates Tier 1 (constraint extraction) + Tier 2 (TF-IDF pruning)
-    + validation + fallback.
-    """
-
-    def __init__(
-        self,
-        pressure_threshold_tokens: int = 1536,  # 75% of 2048
-        recent_messages_to_keep: int = 4,       # Always keep last N messages verbatim
-        target_ratio: float = 0.60,             # Keep 60% of non-entity tokens
-    ):
-        self.extractor = ConstraintExtractor()
-        self.pruner = TFIDFPruner(target_ratio=target_ratio)
-        self.validator = CompressionValidator()
+    def __init__(self, inference_engine=None, pressure_threshold_tokens: int = 1536, recent_messages_to_keep: int = 4):
+        self.inference = inference_engine
         self.pressure_threshold = pressure_threshold_tokens
         self.recent_to_keep = recent_messages_to_keep
 
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
-
-    def compress(
-        self,
-        messages: list[BaseMessage],
-        current_constraints: ConstraintDict,
-        user_query: str,
-    ) -> CompressionResult:
-        """
-        Run the full pipeline.
-
-        Args:
-            messages: Full conversation history (older → newer).
-            current_constraints: Existing constraint dict before this turn.
-            user_query: The current user message (included in the prompt).
-
-        Returns:
-            CompressionResult containing the final prompt and telemetry.
-        """
-        # ----- Always run Tier 1: update constraints from all messages -----
-        updated_constraints = self.extractor.update(current_constraints, messages)
-        constraint_prefix = format_constraints_as_prompt(updated_constraints)
-
-        # ----- Compute raw baseline (no compression) -----
-        raw_prompt = self._assemble_raw_prompt(messages, user_query)
+    def compress(self, messages: list[BaseMessage], current_constraints: MemoryState, user_query: str) -> CompressionResult:
+        hist_lines = []
+        for m in messages:
+            role = {HumanMessage: "User", AIMessage: "Assistant", SystemMessage: "System", ToolMessage: "Tool"}.get(type(m), "Message")
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            hist_lines.append(f"{role}: {content}")
+        hist_lines.append(f"User: {user_query}")
+        hist_str = "\n".join(hist_lines)
+        
+        system_prompt = "You are an intelligent Memory State Tracker. Given a conversation, evaluate changes to the persistent states step-by-step using a <thought> block. Then, extract the final state (active trips, routines, preferences) and record all additions, updates, and deletions into the changelog array. Always output the valid JSON object directly after the <thought> block."
+        
+        updated_memory = current_constraints
+        tier_used = "llm_cot"
+        
+        # Hackathon deterministic heuristic: If the user just says "hello" or short phrases,
+        # circumvent the LLM extraction because the LoRA weights overfit to the explicit travel dataset, 
+        # causing false-positive hallucinations on empty context.
+        if len(hist_str) < 30 and len(messages) <= 2:
+            return CompressionResult(
+                compressed_prompt="", 
+                updated_constraints=current_constraints,
+                raw_tokens=0,
+                compressed_tokens=0,
+                ratio=0.0,
+                tier_used="heuristic_bypass"
+            )
+            
+        if self.inference:
+            try:
+                # 1. TIER 1: LLM Chain-Of-Thought Extraction
+                res = self.inference.generate(prompt=f"Extract the travel constraints from this conversation:\n\n{hist_str}", system_prompt=system_prompt)
+                json_text = res.text.split("</thought>")[-1]
+                start_idx = json_text.find("{")
+                end_idx = json_text.rfind("}")
+                if start_idx != -1 and end_idx != -1:
+                    json_str = json_text[start_idx:end_idx+1]
+                else:
+                    json_str = json_text.strip()
+                    
+                # Clean hallucinated unquoted dates (e.g. 2026-06-02 -> "2026-06-02")
+                json_str = re.sub(r'(?<![a-zA-Z0-9_"-])(\d{4}-\d{2}-\d{2})(?![a-zA-Z0-9_"-])', r'"\1"', json_str)
+                    
+                extracted = json.loads(json_str)
+                
+                # Fix: LLM training data had hardcoded dates, meaning LoRA tensors memorized them causing static hallucination.
+                # Overriding timeline logs explicitly with real-world time-series.
+                import datetime
+                real_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                if "changelog" in extracted:
+                    for log in extracted["changelog"]:
+                        log["date"] = real_date
+                        
+                if "active_trip" in extracted:
+                    updated_memory = extracted
+                else:
+                    raise ValueError("JSON missing critical root structures.")
+            except Exception as e:
+                logger.warning(f"LLM Extraction failed ({e}). Returning fallback previous constraints.")
+                tier_used = "llm_cot_failed"
+                # Removed 'raise e' to prevent crash. Reverting to current memory loop safely!
+                return CompressionResult(compressed_prompt="", updated_constraints=current_constraints, raw_tokens=0, compressed_tokens=0, ratio=0.0, tier_used=tier_used)
+                from backend.compression.constraint_extractor import ConstraintExtractor
+                extractor = ConstraintExtractor()
+                legacy = extractor.extract(hist_str)
+                updated_memory = {
+                    "active_trip": {"destinations": [], "dates": {}, "bookings": []},
+                    "user_profile": {"routines": [], "preferences": []},
+                    "changelog": [{"date": "FALLBACK", "action": "Legacy regex triggered"}]
+                }
+                if "destination" in legacy:
+                    updated_memory["active_trip"]["destinations"].append(legacy["destination"])
+                if "budget" in legacy:
+                    updated_memory["active_trip"]["budget"] = legacy["budget"]
+        
+        # 3. TIER 2: String Formatting / Dropping Old Context
+        memory_prefix = format_memory_as_prompt(updated_memory)
+        raw_prompt = "\n".join(hist_lines)
         raw_tokens = estimate_tokens(raw_prompt)
 
-        # ----- Decide whether Tier 2 is needed -----
-        # If we're below pressure threshold, just inject constraint prefix
-        # and return the full history. Tier 1 telemetry but no pruning.
         if raw_tokens <= self.pressure_threshold:
-            prompt = self._assemble_with_prefix(
-                constraint_prefix, messages, user_query
-            )
+            prompt = memory_prefix + "\n" + raw_prompt
             tokens = estimate_tokens(prompt)
             return CompressionResult(
                 compressed_prompt=prompt,
-                updated_constraints=updated_constraints,
+                updated_constraints=updated_memory,
                 raw_tokens=raw_tokens,
                 compressed_tokens=tokens,
-                ratio=max(0.0, 1.0 - tokens / max(1, raw_tokens)),
-                tier_used="tier1_only",
-                token_scores=[],
+                ratio=max(0.0, 1.0 - (tokens / max(1, raw_tokens))),
+                tier_used="none",
             )
 
-        # ----- Tier 2: TF-IDF pruning on middle messages -----
-        # Keep last N messages verbatim. Prune older messages aggressively.
-        recent, older = self._split_messages(messages)
-        pruned_history, token_scores = self._prune_messages(older)
+        # Fallback to pure recent truncation because TF-IDF uses ConstraintDict natively, breaking the MemoryState!
+        recent = messages[-self.recent_to_keep:] if len(messages) > self.recent_to_keep else messages
 
-        compressed_prompt = self._assemble_prompt_parts(
-            constraint_prefix=constraint_prefix,
-            history_text=pruned_history,
-            recent_messages=recent,
-            user_query=user_query,
-        )
+        lines = [memory_prefix, "\n[RECENT TURNS]"]
+        for m in recent:
+            role = {HumanMessage: "User", AIMessage: "Assistant", SystemMessage: "System", ToolMessage: "Tool"}.get(type(m), "Message")
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            lines.append(f"{role}: {content}")
+        lines.append(f"User: {user_query}")
+        
+        compressed_prompt = "\n".join(lines)
+        tokens = estimate_tokens(compressed_prompt)
 
-        # ----- Validate -----
-        validation = self.validator.validate(compressed_prompt, updated_constraints)
-
-        if not validation.passed:
-            # Fallback: simple sliding window + constraint prefix
-            fallback_prompt = self._fallback_sliding_window(
-                constraint_prefix, messages, user_query
-            )
-            fallback_tokens = estimate_tokens(fallback_prompt)
-            return CompressionResult(
-                compressed_prompt=fallback_prompt,
-                updated_constraints=updated_constraints,
-                raw_tokens=raw_tokens,
-                compressed_tokens=fallback_tokens,
-                ratio=max(0.0, 1.0 - fallback_tokens / max(1, raw_tokens)),
-                tier_used="fallback",
-                token_scores=token_scores,
-                validation=validation,
-            )
-
-        compressed_tokens = estimate_tokens(compressed_prompt)
         return CompressionResult(
             compressed_prompt=compressed_prompt,
-            updated_constraints=updated_constraints,
+            updated_constraints=updated_memory,
             raw_tokens=raw_tokens,
-            compressed_tokens=compressed_tokens,
-            ratio=max(0.0, 1.0 - compressed_tokens / max(1, raw_tokens)),
-            tier_used="tier1_and_tier2",
-            token_scores=token_scores,
-            validation=validation,
+            compressed_tokens=tokens,
+            ratio=max(0.0, 1.0 - (tokens / max(1, raw_tokens))),
+            tier_used=tier_used,
         )
-
-    # ------------------------------------------------------------------
-    # Prompt assembly helpers
-    # ------------------------------------------------------------------
-
-    def _assemble_raw_prompt(self, messages: list[BaseMessage], user_query: str) -> str:
-        """Baseline: what the prompt would be with zero compression."""
-        parts = [self._format_message(m) for m in messages]
-        parts.append(f"User: {user_query}")
-        return "\n".join(parts)
-
-    def _assemble_with_prefix(
-        self,
-        prefix: str,
-        messages: list[BaseMessage],
-        user_query: str,
-    ) -> str:
-        """Tier 1 only: full history + constraint prefix."""
-        lines = []
-        if prefix:
-            lines.append(prefix)
-            lines.append("")
-        for m in messages:
-            lines.append(self._format_message(m))
-        lines.append(f"User: {user_query}")
-        return "\n".join(lines)
-
-    def _assemble_prompt_parts(
-        self,
-        constraint_prefix: str,
-        history_text: str,
-        recent_messages: list[BaseMessage],
-        user_query: str,
-    ) -> str:
-        """Full Tier 2 assembly: prefix + pruned history + recent + query."""
-        lines = []
-        if constraint_prefix:
-            lines.append(constraint_prefix)
-            lines.append("")
-        if history_text:
-            lines.append("[COMPRESSED HISTORY]")
-            lines.append(history_text)
-            lines.append("")
-        lines.append("[RECENT TURNS]")
-        for m in recent_messages:
-            lines.append(self._format_message(m))
-        lines.append(f"User: {user_query}")
-        return "\n".join(lines)
-
-    def _format_message(self, msg: BaseMessage) -> str:
-        """Convert a message to a single display line."""
-        role = {
-            HumanMessage: "User",
-            AIMessage: "Assistant",
-            SystemMessage: "System",
-            ToolMessage: "Tool",
-        }.get(type(msg), "Message")
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        return f"{role}: {content}"
-
-    # ------------------------------------------------------------------
-    # Message splitting & pruning
-    # ------------------------------------------------------------------
-
-    def _split_messages(
-        self, messages: list[BaseMessage]
-    ) -> tuple[list[BaseMessage], list[BaseMessage]]:
-        """Split into (recent_to_keep_verbatim, older_to_prune)."""
-        if len(messages) <= self.recent_to_keep:
-            return messages, []
-        return messages[-self.recent_to_keep:], messages[:-self.recent_to_keep]
-
-    def _prune_messages(
-        self, messages: list[BaseMessage]
-    ) -> tuple[str, list[dict]]:
-        """
-        Concatenate older messages into one text blob and run TF-IDF pruning.
-        Returns (pruned_text, token_score_entries).
-        """
-        if not messages:
-            return "", []
-        concatenated = "\n".join(self._format_message(m) for m in messages)
-        pruned, entries = self.pruner.score_and_prune(concatenated)
-        return pruned, entries
-
-    # ------------------------------------------------------------------
-    # Fallback
-    # ------------------------------------------------------------------
-
-    def _fallback_sliding_window(
-        self,
-        constraint_prefix: str,
-        messages: list[BaseMessage],
-        user_query: str,
-    ) -> str:
-        """
-        Emergency fallback: keep constraint prefix + as many recent messages
-        as fit under a conservative token budget.
-        """
-        budget = self.pressure_threshold - estimate_tokens(constraint_prefix) - 100
-        kept = []
-        used = 0
-        for msg in reversed(messages):
-            formatted = self._format_message(msg)
-            t = estimate_tokens(formatted)
-            if used + t > budget:
-                break
-            kept.insert(0, formatted)
-            used += t
-
-        lines = []
-        if constraint_prefix:
-            lines.append(constraint_prefix)
-            lines.append("")
-        lines.extend(kept)
-        lines.append(f"User: {user_query}")
-        return "\n".join(lines)

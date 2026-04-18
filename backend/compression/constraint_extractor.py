@@ -15,7 +15,7 @@ import re
 from typing import Optional
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 
-from backend.agent.state import ConstraintDict, empty_constraints
+
 
 
 # -----------------------------------------------------------------------------
@@ -122,9 +122,9 @@ class ConstraintExtractor:
 
     def update(
         self,
-        current: ConstraintDict,
+        current: dict,
         messages: list[BaseMessage],
-    ) -> ConstraintDict:
+    ) -> dict:
         """
         Merge extractions from all messages into the running constraint dict.
         Returns a new dict — does not mutate the input.
@@ -173,7 +173,7 @@ class ConstraintExtractor:
     # Individual extractors
     # ------------------------------------------------------------------
 
-    def _extract_budget(self, text: str, out: ConstraintDict) -> None:
+    def _extract_budget(self, text: str, out: dict) -> None:
         # Skip per-night/per-day amounts — those are hotel rates, not total budget
         text_lower = text.lower()
         for pattern in BUDGET_PATTERNS:
@@ -202,14 +202,14 @@ class ConstraintExtractor:
                 except ValueError:
                     continue
 
-    def _extract_dietary(self, text: str, out: ConstraintDict) -> None:
+    def _extract_dietary(self, text: str, out: dict) -> None:
         text_lower = text.lower()
         for keyword, canonical in DIETARY_KEYWORDS.items():
             if keyword in text_lower:
                 if canonical not in out["dietary"]:
                     out["dietary"].append(canonical)
 
-    def _extract_passport(self, text: str, out: ConstraintDict) -> None:
+    def _extract_passport(self, text: str, out: dict) -> None:
         passport = dict(out.get("passport", {}))
 
         expiry_match = PASSPORT_EXPIRY.search(text)
@@ -222,7 +222,7 @@ class ConstraintExtractor:
         if passport:
             out["passport"] = passport
 
-    def _extract_travelers(self, text: str, out: ConstraintDict) -> None:
+    def _extract_travelers(self, text: str, out: dict) -> None:
         travelers = dict(out.get("travelers", {}))
 
         if SOLO_TRAVELER.search(text):
@@ -239,7 +239,7 @@ class ConstraintExtractor:
         if travelers:
             out["travelers"] = travelers
 
-    def _extract_cities(self, text: str, out: ConstraintDict) -> None:
+    def _extract_cities(self, text: str, out: dict) -> None:
         """Match any known cities in the text and add them to the itinerary."""
         for city in KNOWN_CITIES:
             # Word-boundary match to avoid "Rome" matching "Romeo", ignore case
@@ -247,7 +247,7 @@ class ConstraintExtractor:
                 if city not in out["cities"]:
                     out["cities"].append(city)
 
-    def _extract_city_changes(self, text: str, out: ConstraintDict) -> None:
+    def _extract_city_changes(self, text: str, out: dict) -> None:
         """Handle "change Paris to Lyon" patterns — swap in the city list."""
         for match in CITY_CHANGE.finditer(text):
             old_city = match.group(1).strip().title()
@@ -256,7 +256,7 @@ class ConstraintExtractor:
                 idx = out["cities"].index(old_city)
                 out["cities"][idx] = new_city
 
-    def _extract_dates(self, text: str, out: ConstraintDict) -> None:
+    def _extract_dates(self, text: str, out: dict) -> None:
         dates = dict(out.get("travel_dates", {}))
 
         iso_matches = DATE_ISO.findall(text)
@@ -279,7 +279,7 @@ class ConstraintExtractor:
         if dates:
             out["travel_dates"] = dates
 
-    def _extract_hotels(self, text: str, out: ConstraintDict) -> None:
+    def _extract_hotels(self, text: str, out: dict) -> None:
         hotels = dict(out.get("hotel_preferences", {}))
 
         stars_match = HOTEL_STARS.search(text)
@@ -289,7 +289,7 @@ class ConstraintExtractor:
         if hotels:
             out["hotel_preferences"] = hotels
 
-    def _extract_bookings(self, text: str, out: ConstraintDict) -> None:
+    def _extract_bookings(self, text: str, out: dict) -> None:
         """Parse structured booking confirmations from tool outputs or natural language in AI messages."""
         # Detect flight bookings (either tool output or AI conversational confirmation)
         flight_msg = re.search(r'booked.*?flight.*?([A-Z]{2,3}\d{3,4})', text, re.IGNORECASE)
@@ -332,7 +332,7 @@ class ConstraintExtractor:
 # Formatting for system prompt injection
 # -----------------------------------------------------------------------------
 
-def format_constraints_as_prompt(constraints: ConstraintDict) -> str:
+def format_constraints_as_prompt(constraints: dict) -> str:
     """
     Render the constraint dict as a compact system prompt prefix.
     This is what gets prepended to every model call — the agent always sees

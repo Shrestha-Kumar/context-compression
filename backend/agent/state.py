@@ -16,46 +16,39 @@ from langchain_core.messages import BaseMessage
 
 
 # -----------------------------------------------------------------------------
-# Constraint dictionary sub-schema
+# Memory State tracking sub-schema (Phase 9 overhaul)
 # -----------------------------------------------------------------------------
-# This is the information the agent must NEVER forget. It gets injected as a
-# compact system prompt prefix on every turn and is excluded from compression.
+# This is the information the agent must NEVER forget. It handles CRU/D operations
+# and long-term user preferences beyond simple string-matching.
 
-class BudgetConstraint(TypedDict, total=False):
-    max_amount: float
-    currency: str
-    per_person: bool
+class ActiveTrip(TypedDict, total=False):
+    destinations: list[str]
+    dates: dict
+    bookings: list[dict]
 
+class UserProfile(TypedDict, total=False):
+    routines: list[str]
+    preferences: list[str]
 
-class PassportConstraint(TypedDict, total=False):
-    expiry_days: int
-    visa_restriction: str      # e.g. "visa_on_arrival_only"
+class ChangelogEntry(TypedDict):
+    date: str
+    action: str
 
-
-class ConstraintDict(TypedDict, total=False):
+class MemoryState(TypedDict, total=False):
     """
-    The persistent constraint dictionary. Every field is optional because
-    users reveal constraints progressively across turns.
+    Dynamic, open-ended context tracking tracking current trip goals,
+    user preferences routines, and temporal changes.
     """
-    budget: BudgetConstraint
-    cities: list[str]          # Ordered list of cities in the itinerary
-    origin: Optional[str]      # Starting city
-    travel_dates: dict         # e.g. {"start": "2026-05-01", "end": "2026-05-14"}
-    dietary: list[str]         # e.g. ["vegan", "halal"]
-    passport: PassportConstraint
-    travelers: dict            # e.g. {"adults": 2, "children": 1}
-    hotel_preferences: dict    # e.g. {"min_stars": 4, "must_have": ["wifi"]}
-    booked_flights: list[dict] # Confirmed flight selections
-    booked_hotels: list[dict]  # Confirmed hotel selections
+    active_trip: ActiveTrip
+    user_profile: UserProfile
+    changelog: list[ChangelogEntry]
 
-
-def empty_constraints() -> ConstraintDict:
-    """Factory for a fresh empty constraint dict."""
+def empty_memory() -> MemoryState:
+    """Factory for a fresh empty memory dict."""
     return {
-        "cities": [],
-        "dietary": [],
-        "booked_flights": [],
-        "booked_hotels": [],
+        "active_trip": {"destinations": [], "dates": {}, "bookings": []},
+        "user_profile": {"routines": [], "preferences": []},
+        "changelog": []
     }
 
 
@@ -88,8 +81,8 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     turn_number: int
 
-    # The persistent constraint dictionary — our "secret weapon"
-    constraints: ConstraintDict
+    # The persistent memory state — replacing old ConstraintDict
+    memory: MemoryState
 
     # Compression state
     compression_history: list[CompressionEvent]
@@ -111,7 +104,7 @@ def initial_state() -> AgentState:
     return AgentState(
         messages=[],
         turn_number=0,
-        constraints=empty_constraints(),
+        memory=empty_memory(),
         compression_history=[],
         last_compressed_prompt=None,
         last_token_scores=None,

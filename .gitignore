@@ -35,4 +35,34 @@ Thumbs.db
 # Secrets and Configs
 stitch_mcp.json
 
-# NOTE: Markdown (.md) and management files like .gemini or .cline are intentionally tracked.
+# ============================================================
+# ML / Training Artifacts — DO NOT PUSH (too large for GitHub)
+# ============================================================
+
+# LoRA adapter weights and optimizer states (can be GBs)
+training/checkpoints/
+training/merged_model/
+
+# Raw training and evaluation datasets (JSONL)
+training/data/*.jsonl
+
+# PyTorch training logs and debug outputs
+training_log.log
+backend_debug.log
+backend.log
+frontend.log
+*.log
+
+# Scratch test files
+test.py
+test2.py
+test_boolean.py
+test_extraction.py
+test_extraction2.py
+test_extraction3.py
+test_graph.py
+test_regex.py
+test_summary.py
+test_ws.py
+
+# NOTE: README.md, generate_synthetic_data.py, and train_lora.py ARE tracked as runnable source code.
