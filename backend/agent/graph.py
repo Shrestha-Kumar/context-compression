@@ -28,11 +28,10 @@ from langchain_core.messages import (
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import StateGraph, END
 
-from backend.agent.state import AgentState, ConstraintDict, empty_constraints
+from backend.agent.state import AgentState, MemoryState, empty_memory
 from backend.agent.tools import TOOL_MAP
 from backend.agent.inference import InferenceEngine
-from backend.compression.pipeline import CompressionPipeline
-from backend.compression.constraint_extractor import format_constraints_as_prompt
+from backend.compression.pipeline import CompressionPipeline, format_memory_as_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,7 @@ class TravelAgentGraph:
         pipeline: Optional[CompressionPipeline] = None,
     ):
         self.inference = inference_engine
-        self.pipeline = pipeline or CompressionPipeline()
+        self.pipeline = pipeline or CompressionPipeline(inference_engine=inference_engine)
         self._graph = self._build_graph()
 
     # ------------------------------------------------------------------
@@ -188,7 +187,7 @@ class TravelAgentGraph:
         emitter = config.get("configurable", {}).get("emitter", default_emitter)
         
         messages = state.get("messages", [])
-        constraints = state.get("constraints") or empty_constraints()
+        constraints = state.get("memory") or empty_memory()
         turn = state["turn_number"]
 
         # The user's latest message is the "query"
@@ -251,7 +250,7 @@ class TravelAgentGraph:
         }
 
         return {
-            "constraints": result.updated_constraints,
+            "memory": result.updated_constraints,
             "last_compressed_prompt": result.compressed_prompt,
             "last_token_scores": result.token_scores,
             "compression_history": state.get("compression_history", []) + [history_entry],
@@ -267,7 +266,7 @@ class TravelAgentGraph:
         emitter = config.get("configurable", {}).get("emitter", default_emitter)
 
         messages = state.get("messages", [])
-        constraints = state.get("constraints") or empty_constraints()
+        constraints = state.get("memory") or empty_memory()
 
         # Prefer the pre-compressed prompt if fresh
         compressed = state.get("last_compressed_prompt")
@@ -277,7 +276,7 @@ class TravelAgentGraph:
             clear_compressed = True
         else:
             # No compression needed this turn; build a simple prompt
-            prefix = format_constraints_as_prompt(constraints)
+            prefix = format_memory_as_prompt(constraints)
             lines = []
             if prefix:
                 lines.append(prefix)
@@ -296,6 +295,7 @@ class TravelAgentGraph:
         result = self.inference.generate(
             prompt=prompt_text,
             system_prompt=SYSTEM_PROMPT_TEMPLATE,
+            use_lora=False
         )
 
         logger.info(f"Model Inference complete! Preparing to emit KV payload...")

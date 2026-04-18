@@ -50,15 +50,15 @@ _GRAPH: TravelAgentGraph | None = None
 def get_graph() -> TravelAgentGraph:
     global _ENGINE, _GRAPH
     if _GRAPH is None:
-        use_int4 = os.getenv("USE_INT4", "0") == "1"
-        config = InferenceConfig(use_int4=use_int4)
+        # Forcing INT4 loading to natively align with QLoRA trained checkpoints avoiding precision misalignment logic override.
+        config = InferenceConfig(use_int4=True)
         _ENGINE = InferenceEngine(config)
         _GRAPH = TravelAgentGraph(
             inference_engine=_ENGINE,
             pipeline=CompressionPipeline(
+                inference_engine=_ENGINE,
                 pressure_threshold_tokens=1536,
                 recent_messages_to_keep=4,
-                target_ratio=0.60,
             ),
         )
         logger.info("Graph initialized (model loads lazily on first request)")
@@ -114,6 +114,64 @@ async def health():
             if torch.cuda.is_available() else 0
         ),
     }
+
+from pydantic import BaseModel
+
+class SummaryRequest(BaseModel):
+    user_profile: dict
+    changelog: list
+
+@app.post("/generate_summary")
+async def generate_summary(req: SummaryRequest):
+    """
+    Hackathon Requirement: "give a summary of choices and preferences... in a normal language"
+    Abstracts the memory dictionary into a beautifully formatted readable document.
+    """
+    summary_text = "# User Travel Profile Summary\n\n"
+    
+    if req.user_profile.get("routines"):
+        summary_text += "## General Routines\n"
+        for r in req.user_profile["routines"]:
+            summary_text += f"• {r}\n"
+            
+    if req.user_profile.get("preferences"):
+        summary_text += "\n## Explicit Preferences\n"
+        for p in req.user_profile["preferences"]:
+            summary_text += f"• Likes {p}\n"
+            
+    if req.changelog:
+        summary_text += "\n## System Audit Log (Temporal Tracking)\n"
+        from collections import defaultdict
+        from datetime import datetime
+        grouped = defaultdict(list)
+        for log in req.changelog:
+            date_str = log.get('date', 'Unknown Date')
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                friendly_date = dt.strftime("%B %d")
+            except ValueError:
+                friendly_date = date_str
+            grouped[friendly_date].append(log.get('action', ''))
+            
+        for d, actions in grouped.items():
+            summary_text += f"\n## Date {d}\n"
+            for a in actions:
+                a_lower = a.lower()
+                prefix = "Update"
+                if "delete" in a_lower or "remove" in a_lower or "cancel" in a_lower:
+                    prefix = "Delete"
+                elif "add" in a_lower or "book" in a_lower:
+                    prefix = "Add"
+                    
+                parts = a.split(":", 1)
+                val = parts[1].strip() if len(parts) == 2 else a
+                summary_text += f"# {prefix} : {val}\n"
+            summary_text += "\n"
+            
+    if not req.user_profile.get("routines") and not req.user_profile.get("preferences"):
+        summary_text += "No routines or preferences have been learned yet."
+        
+    return {"summary": summary_text}
 
 
 # -----------------------------------------------------------------------------

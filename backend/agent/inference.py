@@ -35,12 +35,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class InferenceConfig:
     model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    max_new_tokens: int = 320
+    max_new_tokens: int = 1500
     temperature: float = 0.3
     top_p: float = 0.9
     window_size: int = 1536          # KV-Cache window
     sink_size: int = 4
     use_int4: bool = False           # Set False for Kaggle P100 (supports FP16)
+    peft_model_path: Optional[str] = "training/checkpoints/qwen-constraint-tracker/checkpoint-63"
 
 
 # -----------------------------------------------------------------------------
@@ -115,6 +116,13 @@ class InferenceEngine:
             ).to(device)
             self._device = device
 
+        if hasattr(self.config, "peft_model_path") and self.config.peft_model_path:
+            import os
+            if os.path.exists(self.config.peft_model_path):
+                logger.info(f"Injecting LoRA adapters from {self.config.peft_model_path}")
+                from peft import PeftModel
+                self._model = PeftModel.from_pretrained(self._model, self.config.peft_model_path)
+
         self._model.eval()
         logger.info(f"Model loaded: {self._device}, {self.vram_allocated_mb():.1f} MB")
 
@@ -126,6 +134,7 @@ class InferenceEngine:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
+        use_lora: bool = True,
     ) -> GenerationResult:
         """
         Generate a response from the model.
@@ -150,14 +159,26 @@ class InferenceEngine:
         kv_before = 0
 
         with torch.no_grad():
-            logger.info("Executing _model.generate() native inference...")
-            output = self._model.generate(
+            import contextlib
+            
+            @contextlib.contextmanager
+            def optional_disable_adapter():
+                if not use_lora and hasattr(self._model, "disable_adapter"):
+                    with self._model.disable_adapter():
+                        yield
+                else:
+                    yield
+                    
+            logger.info(f"Executing _model.generate() native inference... (LoRA Enabled: {use_lora})")
+            with optional_disable_adapter():
+                output = self._model.generate(
                 **inputs,
                 max_new_tokens=self.config.max_new_tokens,
                 do_sample=self.config.temperature > 0,
                 temperature=self.config.temperature,
                 top_p=self.config.top_p,
                 pad_token_id=self._tokenizer.eos_token_id,
+                eos_token_id=[self._tokenizer.eos_token_id, 151645],
                 return_dict_in_generate=True,
                 use_cache=True,
             )

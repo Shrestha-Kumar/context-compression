@@ -64,9 +64,9 @@ BNB_CONFIG = BitsAndBytesConfig(
 
 # LoRA adapter config
 LORA_CONFIG = LoraConfig(
-    r=16,                          # LoRA rank (16 is sweet spot for 1.5B)
-    lora_alpha=32,                 # Scaling factor
-    target_modules=[               # Which layers to adapt
+    r=16,                          # Decoupled to fit dual-loaded instances
+    lora_alpha=32,                
+    target_modules=[               
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj",
     ],
@@ -75,14 +75,14 @@ LORA_CONFIG = LoraConfig(
     task_type="CAUSAL_LM",
 )
 
-# Training hyperparameters (tuned for 6GB VRAM)
+# Training hyperparameters (tuned for strict concurrent 6GB VRAM)
 TRAINING_ARGS = dict(
     output_dir=OUTPUT_DIR,
     num_train_epochs=10,
-    per_device_train_batch_size=1,         # Batch=1 due to VRAM constraints
+    per_device_train_batch_size=1,         # strict conservative limits
     gradient_accumulation_steps=8,         # Effective batch = 8
-    gradient_checkpointing=True,           # Critical for 6GB VRAM!
-    optim="paged_adamw_8bit",              # 8-bit optimizer to save memory
+    gradient_checkpointing=True,           
+    optim="paged_adamw_8bit",              
     learning_rate=2e-4,
     lr_scheduler_type="cosine",
     warmup_ratio=0.05,
@@ -92,8 +92,8 @@ TRAINING_ARGS = dict(
     save_total_limit=2,
     fp16=False,
     bf16=True,                             # Use bf16 on Ampere GPUs
-    max_length=2048,                       # Max context for training
-    packing=True,                          # Pack short sequences together
+    max_length=1024,                       # Scaled context budget with higher representation capacity
+    packing=False,                         # Disable packing to save peak memory on 6GB card
     report_to="none",                      # Disable wandb/tensorboard
     seed=42,
 )

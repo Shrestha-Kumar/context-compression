@@ -34,115 +34,36 @@ AIRLINES = [
 ]
 
 
+from duckduckgo_search import DDGS
+from datetime import datetime
+
 @tool
 def flight_search(origin: str, destination: str, date: str) -> str:
-    """
-    Search for flights between two cities on a given date.
-
-    Args:
-        origin: Origin city name (e.g. "Paris")
-        destination: Destination city name (e.g. "Rome")
-        date: ISO date string (e.g. "2026-05-01")
-
-    Returns:
-        JSON string with flight options.
-    """
-    rng = random.Random(f"{origin}-{destination}-{date}")
-    num_options = rng.randint(3, 6)
-    options = []
-    for i in range(num_options):
-        airline_name, airline_code = rng.choice(AIRLINES)
-        flight_num = rng.randint(100, 9999)
-        departure_hour = rng.randint(5, 22)
-        duration_min = rng.randint(90, 720)
-        price_usd = rng.randint(120, 850)
-        stops = rng.choice([0, 0, 0, 1, 1, 2])
-
-        options.append({
-            "flight_code": f"{airline_code}{flight_num}",
-            "airline": airline_name,
-            "origin": origin,
-            "destination": destination,
-            "date": date,
-            "departure_time": f"{departure_hour:02d}:{rng.randint(0, 59):02d}",
-            "arrival_time": _add_minutes(departure_hour, rng.randint(0, 59), duration_min),
-            "duration_minutes": duration_min,
-            "stops": stops,
-            "aircraft_type": rng.choice(["Boeing 737-800", "Airbus A320", "Airbus A350", "Boeing 787"]),
-            "cabin_class": "economy",
-            "baggage_allowance_kg": rng.choice([20, 23, 25, 30]),
-            "refundable": rng.choice([True, False]),
-            "price": price_usd,
-            "currency": "USD",
-            "available_seats": rng.randint(1, 40),
-        })
-
-    return json.dumps({
-        "query": {"origin": origin, "destination": destination, "date": date},
-        "total_results": num_options,
-        "options": options,
-    }, indent=2)
-
-
-# -----------------------------------------------------------------------------
-# Hotel search
-# -----------------------------------------------------------------------------
-
-HOTEL_BRANDS = [
-    "Grand Palace", "City Center Inn", "Boutique Haven", "Royal Plaza",
-    "Luxury Suites", "Comfort Stay", "Heritage Hotel", "Skyline Tower",
-    "Garden View", "Metropolitan", "Riverside", "Executive Suites",
-]
-
+    """Search for flights over the open internet via DDGS."""
+    try:
+        query = f"flights from {origin} to {destination} on {date} cheap tickets price"
+        results = DDGS().text(query, max_results=3)
+        return json.dumps({
+            "live_search_source": "DuckDuckGo Internet Extraction",
+            "query": query,
+            "results": results
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e), "message": "Verify internet connection"})
 
 @tool
 def hotel_search(city: str, check_in: str, check_out: str, min_stars: int = 3) -> str:
-    """
-    Search for hotels in a city.
-
-    Args:
-        city: City name (e.g. "Paris")
-        check_in: ISO date string
-        check_out: ISO date string
-        min_stars: Minimum star rating (1-5)
-
-    Returns:
-        JSON string with hotel options.
-    """
-    rng = random.Random(f"{city}-{check_in}-hotels")
-    num_options = rng.randint(4, 7)
-    options = []
-    for i in range(num_options):
-        brand = rng.choice(HOTEL_BRANDS)
-        stars = rng.randint(max(min_stars, 1), 5)
-        price_per_night = 40 + (stars * 35) + rng.randint(0, 60)
-
-        options.append({
-            "hotel_id": f"H{rng.randint(10000, 99999)}",
-            "name": f"{brand} {city}",
-            "city": city,
-            "stars": stars,
-            "rating": round(3.5 + rng.random() * 1.5, 1),
-            "reviews_count": rng.randint(120, 5800),
-            "address": f"{rng.randint(1, 200)} {rng.choice(['Main', 'Central', 'Park', 'Station'])} Street",
-            "check_in": check_in,
-            "check_out": check_out,
-            "price_per_night": price_per_night,
-            "currency": "USD",
-            "amenities": rng.sample(
-                ["wifi", "breakfast", "gym", "pool", "spa", "parking", "pet-friendly", "restaurant"],
-                k=rng.randint(3, 6),
-            ),
-            "cancellation_policy": rng.choice(["free_until_24h", "free_until_48h", "non_refundable"]),
-            "distance_to_center_km": round(rng.random() * 8, 1),
-            "available_rooms": rng.randint(1, 12),
-        })
-
-    return json.dumps({
-        "query": {"city": city, "check_in": check_in, "check_out": check_out, "min_stars": min_stars},
-        "total_results": num_options,
-        "options": options,
-    }, indent=2)
+    """Search for real hotels via the open internet using DDGS."""
+    try:
+        query = f"best hotels in {city} {min_stars} stars {check_in} to {check_out} rates booking"
+        results = DDGS().text(query, max_results=3)
+        return json.dumps({
+            "live_search_source": "DuckDuckGo Internet Extraction",
+            "query": query,
+            "results": results
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # -----------------------------------------------------------------------------
