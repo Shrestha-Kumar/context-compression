@@ -207,16 +207,17 @@ class TravelAgentGraph:
             user_query=user_query if isinstance(user_query, str) else str(user_query),
         )
 
-        # Emit compression telemetry
-        emitter({
-            "type": "compression_stats",
-            "turn_number": turn,
-            "raw_tokens": result.raw_tokens,
-            "compressed_tokens": result.compressed_tokens,
-            "ratio": round(result.ratio, 3),
-            "tier_used": result.tier_used,
-            "vram_mb": self.inference.vram_allocated_mb(),
-        })
+        # Emit compression telemetry — skip on heuristic bypass to avoid wiping the metrics chart
+        if result.tier_used != "heuristic_bypass" and result.raw_tokens > 0:
+            emitter({
+                "type": "compression_stats",
+                "turn_number": turn,
+                "raw_tokens": result.raw_tokens,
+                "compressed_tokens": result.compressed_tokens,
+                "ratio": round(result.ratio, 3),
+                "tier_used": result.tier_used,
+                "vram_mb": self.inference.vram_allocated_mb(),
+            })
 
         if result.token_scores:
             emitter({
@@ -249,8 +250,25 @@ class TravelAgentGraph:
             "tier_used": result.tier_used,
         }
 
+        # ---------------------------------------------------------------
+        # Accumulate changelog across all turns so the MD export captures
+        # every add/update/delete, not just the last LLM extraction.
+        # ---------------------------------------------------------------
+        new_memory = result.updated_constraints
+        if isinstance(new_memory, dict):
+            prev_changelog = constraints.get("changelog", []) if isinstance(constraints, dict) else []
+            new_changelog = new_memory.get("changelog", [])
+            # Merge: keep all historical entries, append any new ones not already present
+            seen = {(e["date"], e["action"]) for e in prev_changelog}
+            for entry in new_changelog:
+                key = (entry.get("date", ""), entry.get("action", ""))
+                if key not in seen:
+                    prev_changelog.append(entry)
+                    seen.add(key)
+            new_memory["changelog"] = prev_changelog
+
         return {
-            "memory": result.updated_constraints,
+            "memory": new_memory,
             "last_compressed_prompt": result.compressed_prompt,
             "last_token_scores": result.token_scores,
             "compression_history": state.get("compression_history", []) + [history_entry],
