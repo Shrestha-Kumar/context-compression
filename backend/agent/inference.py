@@ -40,7 +40,7 @@ class InferenceConfig:
     top_p: float = 0.9
     window_size: int = 1536          # KV-Cache window
     sink_size: int = 4
-    use_int4: bool = True            # Set False for Kaggle P100 (supports FP16)
+    use_int4: bool = False           # Set False for Kaggle P100 (supports FP16)
 
 
 # -----------------------------------------------------------------------------
@@ -74,6 +74,7 @@ class InferenceEngine:
         self._model = None
         self._tokenizer = None
         self._device = None
+        self._sink_input_ids = []
 
     # ------------------------------------------------------------------
     # Loading
@@ -101,7 +102,7 @@ class InferenceEngine:
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.config.model_name,
                 quantization_config=quant_config,
-                device_map="auto",
+                device_map={"": 0},
             )
             self._device = "cuda"
         else:
@@ -145,10 +146,11 @@ class InferenceEngine:
 
         inputs = self._tokenizer(input_text, return_tensors="pt").to(self._device)
         input_token_count = inputs.input_ids.shape[1]
+        logger.info(f"Inputs tokenized exactly {input_token_count} dimensions. Starting KV allocation.")
         kv_before = 0
 
         with torch.no_grad():
-            # First pass: prefill + generate with attention-sink-aware cache
+            logger.info("Executing _model.generate() native inference...")
             output = self._model.generate(
                 **inputs,
                 max_new_tokens=self.config.max_new_tokens,
@@ -159,6 +161,7 @@ class InferenceEngine:
                 return_dict_in_generate=True,
                 use_cache=True,
             )
+            logger.info("Native generation completed. Applying KV sink hooks...")
 
             # Apply sink-based pruning to the returned cache.
             # (In a streaming loop we'd apply per-step; here we apply once
@@ -206,7 +209,9 @@ class InferenceEngine:
         return torch.cuda.memory_allocated() / (1024 * 1024)
 
     def get_sink_tokens(self) -> list[str]:
-        """Return text of the first N vocab tokens used as sinks (for UI)."""
+        if self._sink_input_ids is None or len(self._sink_input_ids) == 0:
+            return []
+        ids = self._sink_input_ids[0].tolist()
         self.load()
         # For display: show the tokens the model would anchor to.
         # We use the BOS token + first system prompt tokens.

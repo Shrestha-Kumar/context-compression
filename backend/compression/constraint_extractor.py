@@ -103,7 +103,8 @@ HOTEL_STARS = re.compile(r"(\d)[- ]star\s+hotel", re.IGNORECASE)
 
 # City change patterns: "change Paris to Lyon", "swap Rome for Milan"
 CITY_CHANGE = re.compile(
-    r"(?:change|swap|replace)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(?:to|for|with)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+    r"(?:change|swap|replace)\s+([a-zA-Z]+(?:\s[a-zA-Z]+)?)\s+(?:to|for|with)\s+([a-zA-Z]+(?:\s[a-zA-Z]+)?)",
+    re.IGNORECASE
 )
 
 
@@ -151,8 +152,8 @@ class ConstraintExtractor:
                 self._extract_dates(text, result)
                 self._extract_hotels(text, result)
 
-            # Tool messages may carry booking confirmations
-            elif isinstance(msg, ToolMessage):
+            # Check AI and Tool messages for booking confirmations
+            elif isinstance(msg, (AIMessage, ToolMessage)):
                 self._extract_bookings(text, result)
 
         # Dedupe cities while preserving order (swaps can create duplicates
@@ -241,16 +242,16 @@ class ConstraintExtractor:
     def _extract_cities(self, text: str, out: ConstraintDict) -> None:
         """Match any known cities in the text and add them to the itinerary."""
         for city in KNOWN_CITIES:
-            # Word-boundary match to avoid "Rome" matching "Romeo"
-            if re.search(rf"\b{re.escape(city)}\b", text):
+            # Word-boundary match to avoid "Rome" matching "Romeo", ignore case
+            if re.search(rf"\b{re.escape(city)}\b", text, re.IGNORECASE):
                 if city not in out["cities"]:
                     out["cities"].append(city)
 
     def _extract_city_changes(self, text: str, out: ConstraintDict) -> None:
         """Handle "change Paris to Lyon" patterns — swap in the city list."""
         for match in CITY_CHANGE.finditer(text):
-            old_city = match.group(1).strip()
-            new_city = match.group(2).strip()
+            old_city = match.group(1).strip().title()
+            new_city = match.group(2).strip().title()
             if old_city in out["cities"] and new_city in KNOWN_CITIES:
                 idx = out["cities"].index(old_city)
                 out["cities"][idx] = new_city
@@ -289,17 +290,26 @@ class ConstraintExtractor:
             out["hotel_preferences"] = hotels
 
     def _extract_bookings(self, text: str, out: ConstraintDict) -> None:
-        """Parse structured booking confirmations from tool outputs."""
-        # Flight code pattern: AF1234, UA123, LH2345
-        flight_match = re.search(r'"flight_code"\s*:\s*"([A-Z]{2,3}\d{3,4})"', text)
-        price_match = re.search(r'"price"\s*:\s*(\d+(?:\.\d+)?)', text)
-
-        if flight_match and '"confirmed": true' in text:
-            booking = {"flight_code": flight_match.group(1)}
+        """Parse structured booking confirmations from tool outputs or natural language in AI messages."""
+        # Detect flight bookings (either tool output or AI conversational confirmation)
+        flight_msg = re.search(r'booked.*?flight.*?([A-Z]{2,3}\d{3,4})', text, re.IGNORECASE)
+        flight_tool = re.search(r'"flight_code"\s*:\s*"([A-Z]{2,3}\d{3,4})"', text)
+        
+        fc = flight_msg.group(1).upper() if flight_msg else (flight_tool.group(1).upper() if flight_tool else None)
+        if fc:
+            booking = {"flight_code": fc}
+            price_match = re.search(r'"price"\s*:\s*(\d+(?:\.\d+)?)', text)
             if price_match:
                 booking["price"] = float(price_match.group(1))
             if booking not in out["booked_flights"]:
                 out["booked_flights"].append(booking)
+                
+        # Detect hotel bookings in AI messages (e.g. "I've booked your accommodation at Hotel Le Bristol" or "I've booked your stay at The Ritz-Carlton")
+        hotel_msg = re.search(r'booked(?:.*?accommodation.*?|.*?room.*?|.*?hotel.*?|.*?stay.*?|.*?reservation.*?)(?:at\s+)?([A-Z][\w\'-]+(?:\s[A-Z][\w\'-]+)*)', text)
+        if hotel_msg:
+            booking = {"name": hotel_msg.group(1)}
+            if booking not in out["booked_hotels"]:
+                out["booked_hotels"].append(booking)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -378,5 +388,9 @@ def format_constraints_as_prompt(constraints: ConstraintDict) -> str:
     if constraints.get("booked_flights"):
         codes = [f["flight_code"] for f in constraints["booked_flights"]]
         lines.append(f"- Booked flights: {', '.join(codes)}")
+        
+    if constraints.get("booked_hotels"):
+        names = [h["name"] for h in constraints["booked_hotels"]]
+        lines.append(f"- Booked hotels: {', '.join(names)}")
 
     return "\n".join(lines) if len(lines) > 1 else ""

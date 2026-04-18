@@ -20,11 +20,12 @@ frontend via WebSocket as they execute, rather than only at the end.
 
 import json
 import logging
-from typing import Callable, Optional
+from typing import Annotated, TypedDict, Callable, Optional
 
 from langchain_core.messages import (
     HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage,
 )
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import StateGraph, END
 
 from backend.agent.state import AgentState, ConstraintDict, empty_constraints
@@ -114,9 +115,6 @@ class TravelAgentGraph:
         Process one user turn. Returns the updated state.
         The emitter is called with frontend events during processing.
         """
-        # Stash the emitter on state for node access.
-        # We attach it to a magic key that we strip before returning.
-        state["_emitter"] = emitter  # type: ignore
         state["turn_number"] = state.get("turn_number", 0) + 1
 
         # Add the user message to history
@@ -124,11 +122,9 @@ class TravelAgentGraph:
             HumanMessage(content=user_input)
         ]
 
-        # Run the graph to completion
-        final_state = self._graph.invoke(state)
-
-        # Clean up the emitter key before returning
-        final_state.pop("_emitter", None)
+        # Run the graph to completion natively via configuration tracking
+        final_state = self._graph.invoke(state, config={"configurable": {"emitter": emitter}})
+            
         return final_state
 
     # ------------------------------------------------------------------
@@ -176,19 +172,21 @@ class TravelAgentGraph:
             (m.content if isinstance(m.content, str) else str(m.content))
             for m in messages
         )
-        token_count = self.inference.count_tokens(joined)
-        needs = token_count > self.pipeline.pressure_threshold
-
-        logger.info(f"[pressure_check] tokens={token_count} needs_compression={needs}")
+        # Always force compression evaluation to yield rich telemetry for the Dashboard
+        needs = True
+        
+        logger.info(f"[pressure_check] tokens={self.inference.count_tokens(joined)} needs_compression={needs}")
 
         return {"needs_compression": needs}
 
-    def _compress_node(self, state: AgentState) -> dict:
+    def _compress_node(self, state: AgentState, config: RunnableConfig) -> dict:
         """
         Run the two-tier compression pipeline. Updates constraints,
         generates the compressed prompt, emits telemetry.
         """
-        emitter: Emitter = state.get("_emitter", noop_emitter)  # type: ignore
+        def default_emitter(e: dict): pass
+        emitter = config.get("configurable", {}).get("emitter", default_emitter)
+        
         messages = state.get("messages", [])
         constraints = state.get("constraints") or empty_constraints()
         turn = state["turn_number"]
@@ -260,12 +258,14 @@ class TravelAgentGraph:
             "needs_compression": False,
         }
 
-    def _llm_node(self, state: AgentState) -> dict:
+    def _llm_node(self, state: AgentState, config: RunnableConfig) -> dict:
         """
         Call the model. Construct prompt from either the compressed prompt
         (if we came through compress_node) or directly from messages.
         """
-        emitter: Emitter = state.get("_emitter", noop_emitter)  # type: ignore
+        def default_emitter(e: dict): pass
+        emitter = config.get("configurable", {}).get("emitter", default_emitter)
+
         messages = state.get("messages", [])
         constraints = state.get("constraints") or empty_constraints()
 
@@ -298,15 +298,28 @@ class TravelAgentGraph:
             system_prompt=SYSTEM_PROMPT_TEMPLATE,
         )
 
+        logger.info(f"Model Inference complete! Preparing to emit KV payload...")
+
         # Always emit the KV-cache state for visualization
+        logger.info("Evaluating turn_number")
+        tn = state["turn_number"]
+        logger.info("Evaluating get_sink_tokens")
+        st = self.inference.get_sink_tokens()
+        logger.info("Evaluating evicted_count")
+        ev = max(0, result.kv_seq_len_before - result.kv_seq_len_after)
+        logger.info("Evaluating window_size")
+        ws = self.inference.config.window_size
+        
+        logger.info("Calling emitter...")
         emitter({
-            "type": "kv_cache_state",
-            "turn_number": state["turn_number"],
-            "sink_tokens": self.inference.get_sink_tokens(),
-            "recent_tokens": [],  # Populated in streaming mode; omitted here for simplicity
-            "evicted_count": max(0, result.kv_seq_len_before - result.kv_seq_len_after),
-            "window_size": self.inference.config.window_size,
+             "type": "kv_cache_state",
+             "turn_number": tn,
+             "sink_tokens": st,
+             "recent_tokens": [],
+             "evicted_count": ev,
+             "window_size": ws,
         })
+        logger.info("Emitter finished successfully!")
 
         update: dict = {}
 
@@ -339,9 +352,10 @@ class TravelAgentGraph:
 
         return update
 
-    def _tool_node(self, state: AgentState) -> dict:
+    def _tool_node(self, state: AgentState, config: RunnableConfig) -> dict:
         """Execute a pending tool call and add the result to messages."""
-        emitter: Emitter = state.get("_emitter", noop_emitter)  # type: ignore
+        def default_emitter(e: dict): pass
+        emitter = config.get("configurable", {}).get("emitter", default_emitter)
         tool_call = state.get("pending_tool_call")
         if not tool_call:
             return {}

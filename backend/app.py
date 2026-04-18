@@ -50,7 +50,7 @@ _GRAPH: TravelAgentGraph | None = None
 def get_graph() -> TravelAgentGraph:
     global _ENGINE, _GRAPH
     if _GRAPH is None:
-        use_int4 = os.getenv("USE_INT4", "1") == "1"
+        use_int4 = os.getenv("USE_INT4", "0") == "1"
         config = InferenceConfig(use_int4=use_int4)
         _ENGINE = InferenceEngine(config)
         _GRAPH = TravelAgentGraph(
@@ -136,6 +136,7 @@ async def chat_websocket(websocket: WebSocket):
         except (TypeError, ValueError) as e:
             logger.warning(f"Could not serialize event: {e}")
             return
+        logger.info(f"Submitting {event['type']} to async event loop...")
         asyncio.run_coroutine_threadsafe(
             _safe_send(websocket, payload), loop
         )
