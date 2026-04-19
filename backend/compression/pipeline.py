@@ -97,6 +97,16 @@ class CompressionPipeline:
                         
                 if "active_trip" in extracted:
                     updated_memory = extracted
+                    # Sanity filter: reject changelog entries that look like raw questions
+                    # (longer than 120 chars or end with a '?') — these are LoRA hallucinations
+                    # where the user's query text itself leaked into the extracted log.
+                    if "changelog" in updated_memory:
+                        updated_memory["changelog"] = [
+                            e for e in updated_memory["changelog"]
+                            if isinstance(e.get("action", ""), str)
+                            and len(e["action"]) < 120
+                            and not e["action"].strip().endswith("?")
+                        ]
                 else:
                     raise ValueError("JSON missing critical root structures.")
             except Exception as e:
@@ -104,18 +114,6 @@ class CompressionPipeline:
                 tier_used = "llm_cot_failed"
                 # Removed 'raise e' to prevent crash. Reverting to current memory loop safely!
                 return CompressionResult(compressed_prompt="", updated_constraints=current_constraints, raw_tokens=0, compressed_tokens=0, ratio=0.0, tier_used=tier_used)
-                from backend.compression.constraint_extractor import ConstraintExtractor
-                extractor = ConstraintExtractor()
-                legacy = extractor.extract(hist_str)
-                updated_memory = {
-                    "active_trip": {"destinations": [], "dates": {}, "bookings": []},
-                    "user_profile": {"routines": [], "preferences": []},
-                    "changelog": [{"date": "FALLBACK", "action": "Legacy regex triggered"}]
-                }
-                if "destination" in legacy:
-                    updated_memory["active_trip"]["destinations"].append(legacy["destination"])
-                if "budget" in legacy:
-                    updated_memory["active_trip"]["budget"] = legacy["budget"]
         
         # 3. TIER 2: String Formatting / Dropping Old Context
         memory_prefix = format_memory_as_prompt(updated_memory)
