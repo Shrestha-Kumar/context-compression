@@ -6,6 +6,7 @@ import { EvalHarness } from '../components/landing/EvalHarness';
 import { Footer } from '../components/landing/Footer';
 import { motion, useScroll, useTransform } from 'motion/react';
 import Spline from '@splinetool/react-spline';
+import { SplineErrorBoundary } from '../components/SplineErrorBoundary';
 
 const SplineBackground = () => {
   const { scrollYProgress } = useScroll();
@@ -17,7 +18,9 @@ const SplineBackground = () => {
         style={{ scale }} 
         className="w-full h-full pointer-events-auto"
       >
-        <Spline scene="https://prod.spline.design/WQqN9roZiflMXT2R/scene.splinecode" />
+        <SplineErrorBoundary>
+          <Spline scene="https://prod.spline.design/WQqN9roZiflMXT2R/scene.splinecode" />
+        </SplineErrorBoundary>
       </motion.div>
     </div>
   );

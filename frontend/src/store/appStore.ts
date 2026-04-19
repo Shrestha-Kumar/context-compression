@@ -27,6 +27,10 @@ interface AppState {
 
   messages: ChatMessage[];
   appendMessage: (msg: ChatMessage) => void;
+  setMessages: (msgs: ChatMessage[]) => void;
+
+  currentSessionId: string | null;
+  setCurrentSessionId: (id: string | null) => void;
 
   metrics: {
     compRatio: number;
@@ -62,6 +66,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   messages: [],
   appendMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
+  setMessages: (msgs) => set({ messages: msgs }),
+
+  currentSessionId: null,
+  setCurrentSessionId: (id) => set({ currentSessionId: id }),
 
   metrics: { compRatio: 0, tokens: 0, turn: "#00" },
   updateMetrics: (m) => set((state) => ({ metrics: { ...state.metrics, ...m } })),

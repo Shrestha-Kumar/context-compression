@@ -10,13 +10,13 @@ export function Navbar() {
         CONTEXT_COMPRESSION
       </div>
       <div className="hidden md:flex items-center gap-[40px]">
-        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#">CAPABILITIES</a>
-        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#">ARCHITECTURE</a>
-        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#">EVAL_HARNESS</a>
-        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] opacity-30 hover:opacity-100 transition-opacity" href="#">DOCS</a>
+        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#capabilities">CAPABILITIES</a>
+        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#architecture">ARCHITECTURE</a>
+        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#eval_harness">EVAL_HARNESS</a>
+        <a className="font-sans text-[12px] font-medium uppercase text-ink tracking-[1px] hover:opacity-60 transition-opacity" href="#docs">DOCS</a>
       </div>
       <button 
-        onClick={() => startTransition('/dashboard')}
+        onClick={() => startTransition('/compression')}
         className="bg-ink text-surface px-[48px] py-[20px] font-semibold text-[13px] uppercase tracking-[2px] hover:opacity-80 transition-opacity hidden lg:block cursor-pointer pointer-events-auto"
       >
         START BUILDING

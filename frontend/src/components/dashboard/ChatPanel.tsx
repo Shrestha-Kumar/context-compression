@@ -29,7 +29,7 @@ export function ChatPanel() {
   }, [messages.length]);
 
   return (
-    <section className={`min-w-[320px] flex flex-col border-r border-surface-dim bg-white h-full relative cursor-default ${useAppStore((state) => state.isSidebarVisible) ? 'w-[45%]' : 'w-full flex-1'}`}>
+    <section className={`min-w-[320px] flex flex-col border-r border-surface-dim bg-white h-full relative cursor-default flex-1 w-full`}>
       <div className="px-6 py-5 flex justify-between items-center border-b border-surface-dim bg-background">
         <div className="flex flex-col gap-1">
           <span className="font-sans font-black text-black text-2xl tracking-tighter uppercase">

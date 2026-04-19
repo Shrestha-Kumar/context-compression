@@ -2,7 +2,7 @@ import React from 'react';
 
 export function EvalHarness() {
   return (
-    <section className="py-[80px] px-[60px] relative">
+    <section id="eval_harness" className="py-[80px] px-[60px] relative">
       <div className="max-w-7xl mx-auto relative z-10">
         <div className="bg-surface border border-surface-dim relative overflow-hidden flex flex-col lg:flex-row">
           <div className="lg:w-3/5 p-[40px] lg:p-[60px] flex flex-col justify-center">

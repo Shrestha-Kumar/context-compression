@@ -1,9 +1,13 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React from 'react';
 import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
-import Settings from './pages/Settings';
+import Sessions from './pages/Sessions';
 import Terminal from './pages/Terminal';
-import TemplatePage from './pages/TemplatePage';
+import Telemetry from './pages/Telemetry';
+import Weights from './pages/Weights';
+import Latency from './pages/Latency';
+import Database from './pages/Database';
 import { TransitionOverlay } from './components/TransitionOverlay';
 import { WebSocketProvider } from './hooks/useWebSocket';
 
@@ -14,15 +18,19 @@ export default function App() {
       <TransitionOverlay />
       <Routes>
         <Route path="/" element={<Landing />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/terminal" element={<Terminal />} />
-        <Route path="/telemetry" element={<TemplatePage title="Telemetry" context="Real-time ingestion" />} />
-        <Route path="/compression" element={<TemplatePage title="Compression" context="Signal processing" />} />
-        <Route path="/weights" element={<TemplatePage title="Weights" context="Neural network parameter" />} />
-        <Route path="/latency" element={<TemplatePage title="Latency" context="Historical performance" />} />
-        <Route path="/database" element={<TemplatePage title="Database" context="Vector embedding" />} />
-      </Routes>
+          {/* Both dashboard and compression will render the main Compression workspace */}
+          <Route path="/dashboard" element={<Navigate to="/compression" replace />} />
+          <Route path="/compression" element={<Dashboard />} />
+          
+          <Route path="/terminal" element={<Terminal />} />
+          <Route path="/sessions" element={<Sessions />} />
+          
+          {/* Dynamic Functional Pages */}
+          <Route path="/telemetry" element={<Telemetry />} />
+          <Route path="/weights" element={<Weights />} />
+          <Route path="/latency" element={<Latency />} />
+          <Route path="/database" element={<Database />} />
+        </Routes>
     </BrowserRouter>
   );
 }

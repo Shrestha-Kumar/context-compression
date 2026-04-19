@@ -3,7 +3,7 @@ import { useAppStore } from '../store/appStore';
 
 export function WebSocketProvider({ url }: { url: string }) {
   const ws = useRef<WebSocket | null>(null);
-  const { appendMessage, updateMetrics, setWsConnected, updateConstraints, updateTokenHeatmap, updateKVCache, _setSendMessage } = useAppStore();
+  const { appendMessage, setMessages, updateMetrics, setWsConnected, updateConstraints, updateTokenHeatmap, updateKVCache, _setSendMessage, currentSessionId, setCurrentSessionId } = useAppStore();
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -12,6 +12,10 @@ export function WebSocketProvider({ url }: { url: string }) {
 
     ws.current.onopen = () => {
       setWsConnected(true);
+      // If we have a currentSessionId, inform the backend immediately
+      if (currentSessionId) {
+        ws.current?.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
+      }
     };
 
     ws.current.onmessage = (event) => {
@@ -55,6 +59,12 @@ export function WebSocketProvider({ url }: { url: string }) {
             });
             break;
             
+          case 'session_update':
+            if (data.session_id) {
+              setCurrentSessionId(data.session_id);
+            }
+            break;
+
           case 'error':
             console.error("Backend Error:", data.message);
             break;
@@ -81,7 +91,11 @@ export function WebSocketProvider({ url }: { url: string }) {
 
   const sendMessage = useCallback((text: string) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: 'user_message', text }));
+      ws.current.send(JSON.stringify({ 
+        type: 'user_message', 
+        text,
+        session_id: currentSessionId 
+      }));
     }
   }, []);
 

@@ -1,6 +1,8 @@
 import React from 'react';
+import { useAppStore } from '../../store/appStore';
 
 export function Hero() {
+  const startTransition = useAppStore(state => state.startTransition);
   return (
     <section className="relative min-h-[calc(100vh-80px)] px-[60px] py-[40px] flex flex-col justify-center overflow-hidden">
       <div className="relative z-10 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-[40px] items-center">
@@ -10,17 +12,17 @@ export function Hero() {
           </div>
           <h1 className="text-[72px] leading-[0.95] font-light mb-[32px] tracking-[-2px] text-ink">
             Infinite Context.<br/>
-            Zero Latency.
+            Optimized Recall.
           </h1>
           <p className="text-[16px] leading-[1.6] text-ink-light mb-[48px] max-w-[400px]">
             A brutalist approach to LLM memory. Compress terabytes of unstructured context into surgical tokens without losing the signal in the noise.
           </p>
           <div className="flex flex-wrap gap-4 relative z-40">
-            <button className="w-fit bg-ink text-surface px-[48px] py-[20px] font-semibold text-[13px] uppercase tracking-[2px] hover:opacity-80 transition-opacity cursor-pointer">
-              Deploy Pipeline
-            </button>
-            <button className="w-fit bg-transparent border border-surface-dim text-ink px-[48px] py-[20px] font-semibold text-[13px] uppercase tracking-[2px] hover:bg-surface-dim transition-colors cursor-pointer">
-              Read Whitepaper
+            <button 
+              onClick={() => startTransition('/compression')}
+              className="w-fit bg-ink text-surface px-[48px] py-[20px] font-semibold text-[13px] uppercase tracking-[2px] hover:opacity-80 transition-opacity cursor-pointer pointer-events-auto"
+            >
+              Start Building
             </button>
           </div>
         </div>

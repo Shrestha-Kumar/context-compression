@@ -3,7 +3,7 @@ import { Cpu, Database, Terminal, Shield, Waypoints, BarChart } from 'lucide-rea
 
 export function Capabilities() {
   return (
-    <section className="py-[80px] px-[60px] relative">
+    <section id="capabilities" className="py-[80px] px-[60px] relative">
       <div className="max-w-7xl mx-auto">
         <div className="mb-[40px] relative z-10">
           <span className="text-[12px] uppercase tracking-[4px] text-ink-lighter">// CAPABILITIES</span>
@@ -36,8 +36,8 @@ export function Capabilities() {
             <Terminal className="absolute top-[30px] right-[30px] w-[32px] h-[32px] opacity-40 group-hover:opacity-100" strokeWidth={1} />
             <div>
               <span className="text-[10px] uppercase tracking-[2px] opacity-60 mb-[8px] block">03</span>
-              <h3 className="text-[24px] font-light mb-[16px] group-hover:text-surface">Real-time Inference</h3>
-              <p className="text-[14px] leading-[1.6] opacity-70">Compression happens on-the-fly during the pre-fill stage, ensuring no impact on generation speed.</p>
+              <h3 className="text-[24px] font-light mb-[16px] group-hover:text-surface">Persistent Memory Layer</h3>
+              <p className="text-[14px] leading-[1.6] opacity-70">Decouples core conversational logic from the context window, ensuring perfect recall even under extreme pressure.</p>
             </div>
           </div>
           

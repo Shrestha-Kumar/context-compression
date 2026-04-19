@@ -288,16 +288,20 @@ class TravelAgentGraph:
 
         # Prefer the pre-compressed prompt if fresh
         compressed = state.get("last_compressed_prompt")
+        
+        # ALWAYS prepend the persistent memory state so the LLM NEVER forgets
+        # hotel bookings, budgets, or routines even after KV-cache eviction truncates old turns.
+        memory_prefix = format_memory_as_prompt(constraints)
+        
         if compressed:
-            prompt_text = compressed
-            # Single-use: clear for next turn
+            # Injecting memory prefix even onto already-compressed prompts.
+            prompt_text = (memory_prefix + "\n" + compressed) if memory_prefix else compressed
             clear_compressed = True
         else:
             # No compression needed this turn; build a simple prompt
-            prefix = format_memory_as_prompt(constraints)
             lines = []
-            if prefix:
-                lines.append(prefix)
+            if memory_prefix:
+                lines.append(memory_prefix)
                 lines.append("")
             for m in messages:
                 role = {
