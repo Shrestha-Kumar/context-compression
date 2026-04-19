@@ -12,16 +12,11 @@ export function WebSocketProvider({ url }: { url: string }) {
 
     ws.current.onopen = () => {
       setWsConnected(true);
-      // Re-identify whenever we connect
+      // Send initial identity if we already have one
       if (currentSessionId) {
         ws.current?.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
       }
     };
-
-    // Reactive identity: if session ID changes while socket is open, tell the backend
-    if (ws.current?.readyState === WebSocket.OPEN && currentSessionId) {
-      ws.current.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
-    }
 
     ws.current.onmessage = (event) => {
       try {
@@ -68,7 +63,8 @@ export function WebSocketProvider({ url }: { url: string }) {
             break;
             
           case 'session_update':
-            if (data.session_id) {
+            // Only update if it's actually different to avoid unnecessary re-renders
+            if (data.session_id && data.session_id !== currentSessionId) {
               setCurrentSessionId(data.session_id);
             }
             break;
@@ -88,14 +84,24 @@ export function WebSocketProvider({ url }: { url: string }) {
       setTimeout(connect, 3000);
     };
 
-  }, [url, appendMessage, updateMetrics, setWsConnected, currentSessionId]); // Added currentSessionId dependency
+  }, [url, appendMessage, updateMetrics, setWsConnected]); // Removed currentSessionId and other volatile dependencies
 
   useEffect(() => {
     connect();
     return () => {
-      ws.current?.close();
+      if (ws.current) {
+        ws.current.onclose = null; // Prevent reconnect on intentional close
+        ws.current.close();
+      }
     };
   }, [connect]);
+
+  // Reactive Identity Pulse: tell the backend when we switch sessions
+  useEffect(() => {
+    if (ws.current?.readyState === WebSocket.OPEN && currentSessionId) {
+      ws.current.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
+    }
+  }, [currentSessionId]);
 
   const sendMessage = useCallback((text: string) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
