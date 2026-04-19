@@ -65,18 +65,20 @@ cd context-compression-module
 ```
 
 ### 2. Backend Bootup
-Since the model is strictly bound to PyTorch and QLoRA, ensure CUDA 12.1+ and the proper environment are initialized.
+Since the model is strictly bound to PyTorch and QLoRA, ensure CUDA 12.1+ and a Python 3.10+ environment are ready.
 
-**Using Micromamba (Recommended):**
+**Standard Setup:**
 ```bash
-micromamba create -n dl python=3.10
-micromamba activate dl
-pip install -r backend/requirements.txt
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 **Start the local PyTorch ASGI Socket:**
 ```bash
-PYTHONPATH=. micromamba run -n dl python3 backend/app.py
+# From the root directory:
+PYTHONPATH=. python backend/app.py
 ```
 
 ### 3. Frontend Initialization
