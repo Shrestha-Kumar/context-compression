@@ -174,6 +174,9 @@ class TravelAgentGraph:
         # Always force compression evaluation to yield rich telemetry for the Dashboard
         needs = True
         
+        if state.get("evaluate_baseline"):
+            needs = False
+        
         logger.info(f"[pressure_check] tokens={self.inference.count_tokens(joined)} needs_compression={needs}")
 
         return {"needs_compression": needs}

@@ -86,6 +86,7 @@ class InferenceEngine:
         if self._model is not None:
             return
 
+
         from transformers import AutoTokenizer, AutoModelForCausalLM
 
         logger.info(f"Loading tokenizer: {self.config.model_name}")
@@ -143,6 +144,7 @@ class InferenceEngine:
         slicing if the input exceeds the configured window size.
         """
         self.load()
+
 
         messages = []
         if system_prompt:

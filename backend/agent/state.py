@@ -97,6 +97,7 @@ class AgentState(TypedDict):
     # Agent control
     pending_tool_call: Optional[dict]       # If LLM wants to call a tool
     needs_compression: bool                 # Set by pressure check node
+    evaluate_baseline: bool                 # If true, disables compression for evaluation
 
 
 def initial_state() -> AgentState:
@@ -113,4 +114,5 @@ def initial_state() -> AgentState:
         kv_evicted_count=0,
         pending_tool_call=None,
         needs_compression=False,
+        evaluate_baseline=False,
     )
