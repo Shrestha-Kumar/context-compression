@@ -99,7 +99,7 @@ class ErrorEvent(TypedDict):
 # Validation helpers
 # =============================================================================
 
-VALID_INCOMING_TYPES = {"user_message", "reset_session"}
+VALID_INCOMING_TYPES = {"user_message", "reset_session", "identify"}
 
 VALID_OUTGOING_TYPES = {
     "assistant_message",

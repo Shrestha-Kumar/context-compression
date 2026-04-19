@@ -3,7 +3,7 @@ import { useAppStore } from '../store/appStore';
 
 export function WebSocketProvider({ url }: { url: string }) {
   const ws = useRef<WebSocket | null>(null);
-  const { appendMessage, updateMetrics, setWsConnected, updateConstraints, updateTokenHeatmap, updateKVCache, _setSendMessage } = useAppStore();
+  const { appendMessage, setMessages, updateMetrics, setWsConnected, updateConstraints, updateTokenHeatmap, updateKVCache, _setSendMessage, currentSessionId, setCurrentSessionId } = useAppStore();
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -12,6 +12,10 @@ export function WebSocketProvider({ url }: { url: string }) {
 
     ws.current.onopen = () => {
       setWsConnected(true);
+      // Send initial identity if we already have one
+      if (currentSessionId) {
+        ws.current?.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
+      }
     };
 
     ws.current.onmessage = (event) => {
@@ -30,8 +34,11 @@ export function WebSocketProvider({ url }: { url: string }) {
             
           case 'compression_stats':
             updateMetrics({
-              compRatio: data.ratio || data.ratio_percent,
-              tokens: data.compressed_tokens || data.window_tokens,
+              compRatio: data.ratio || 0,
+              tokens: data.compressed_tokens || 0,
+              vram_mb: data.vram_mb || 0,
+              raw_tokens: data.raw_tokens || 0,
+              compressed_tokens: data.compressed_tokens || 0,
               turn: `#0${data.turn_number || 0}`
             });
             break;
@@ -55,6 +62,13 @@ export function WebSocketProvider({ url }: { url: string }) {
             });
             break;
             
+          case 'session_update':
+            // Only update if it's actually different to avoid unnecessary re-renders
+            if (data.session_id && data.session_id !== currentSessionId) {
+              setCurrentSessionId(data.session_id);
+            }
+            break;
+
           case 'error':
             console.error("Backend Error:", data.message);
             break;
@@ -70,20 +84,34 @@ export function WebSocketProvider({ url }: { url: string }) {
       setTimeout(connect, 3000);
     };
 
-  }, [url, appendMessage, updateMetrics, setWsConnected]);
+  }, [url, appendMessage, updateMetrics, setWsConnected]); // Removed currentSessionId and other volatile dependencies
 
   useEffect(() => {
     connect();
     return () => {
-      ws.current?.close();
+      if (ws.current) {
+        ws.current.onclose = null; // Prevent reconnect on intentional close
+        ws.current.close();
+      }
     };
   }, [connect]);
 
+  // Reactive Identity Pulse: tell the backend when we switch sessions
+  useEffect(() => {
+    if (ws.current?.readyState === WebSocket.OPEN && currentSessionId) {
+      ws.current.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
+    }
+  }, [currentSessionId]);
+
   const sendMessage = useCallback((text: string) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: 'user_message', text }));
+      ws.current.send(JSON.stringify({ 
+        type: 'user_message', 
+        text,
+        session_id: currentSessionId 
+      }));
     }
-  }, []);
+  }, [currentSessionId]); // Fixed stale closure
 
   useEffect(() => {
     _setSendMessage(sendMessage);

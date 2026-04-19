@@ -30,6 +30,8 @@ from backend.agent.inference import InferenceEngine, InferenceConfig
 from backend.agent.graph import TravelAgentGraph
 from backend.compression.pipeline import CompressionPipeline
 from contracts.ws_schema import is_valid_incoming
+from backend.storage import storage
+import uuid
 
 
 logging.basicConfig(
@@ -115,63 +117,134 @@ async def health():
         ),
     }
 
+# -----------------------------------------------------------------------------
+# Sessions API
+# -----------------------------------------------------------------------------
+
+@app.get("/sessions")
+async def list_sessions():
+    return {"sessions": storage.get_sessions()}
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    state = storage.get_session_state(session_id)
+    if not state:
+        return {"error": "Session not found"}, 404
+    # Serializing BaseMessages for frontend if needed, though they are usually
+    # handled via the JSON text in the DB.
+    from langchain_core.messages import messages_to_dict
+    return {
+        "id": state["id"],
+        "name": state["name"],
+        "memory": state["memory"],
+        "compression_history": state["compression_history"],
+        "messages": messages_to_dict(state["messages"])
+    }
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    storage.delete_session(session_id)
+    return {"status": "deleted"}
+
+
 from pydantic import BaseModel
 
 class SummaryRequest(BaseModel):
-    user_profile: dict
-    changelog: list
+    user_profile: dict = {}
+    changelog: list = []
+    active_trip: dict = {}
+    memory: dict = {}   # Full MemoryState if available
 
 @app.post("/generate_summary")
 async def generate_summary(req: SummaryRequest):
     """
-    Hackathon Requirement: "give a summary of choices and preferences... in a normal language"
-    Abstracts the memory dictionary into a beautifully formatted readable document.
+    Hackathon Requirement: Structured Markdown export of the full user memory state.
+    Groups audit logs chronologically, renders trip details + preferences in plain language.
     """
-    summary_text = "# User Travel Profile Summary\n\n"
-    
-    if req.user_profile.get("routines"):
-        summary_text += "## General Routines\n"
-        for r in req.user_profile["routines"]:
-            summary_text += f"• {r}\n"
-            
-    if req.user_profile.get("preferences"):
-        summary_text += "\n## Explicit Preferences\n"
-        for p in req.user_profile["preferences"]:
-            summary_text += f"• Likes {p}\n"
-            
-    if req.changelog:
-        summary_text += "\n## System Audit Log (Temporal Tracking)\n"
-        from collections import defaultdict
-        from datetime import datetime
-        grouped = defaultdict(list)
-        for log in req.changelog:
-            date_str = log.get('date', 'Unknown Date')
+    from collections import defaultdict
+    from datetime import datetime
+
+    # Support both old format {user_profile, changelog} and new full {memory}
+    memory = req.memory if req.memory else {}
+    user_profile = memory.get("user_profile") or req.user_profile or {}
+    active_trip   = memory.get("active_trip")  or req.active_trip  or {}
+    changelog     = memory.get("changelog")    or req.changelog    or []
+
+    lines = ["# User Travel Profile Summary\n"]
+
+    # ── Active Trip ──────────────────────────────────────────────────────────
+    if active_trip and any(active_trip.values()):
+        lines.append("## Active Trip\n")
+        dates = active_trip.get("dates", {})
+        dests = active_trip.get("destinations", [])
+        bookings = active_trip.get("bookings", [])
+        budget = active_trip.get("budget")
+
+        if dests:
+            lines.append(f"• **Destinations:** {', '.join(dests)}")
+        if dates:
+            start = dates.get("start") or dates.get("departure", "")
+            end   = dates.get("end")   or dates.get("return", "")
+            if start or end:
+                lines.append(f"• **Dates:** {start} → {end}")
+        if budget:
+            lines.append(f"• **Budget cap:** ${budget}")
+        if bookings:
+            for b in bookings:
+                code = b.get("code", "")
+                btype = b.get("type", "booking")
+                notes = b.get("notes", "")
+                lines.append(f"• **{btype.capitalize()}:** {code} {('— ' + notes) if notes else ''}")
+        lines.append("")
+
+    # ── User Profile ─────────────────────────────────────────────────────────
+    routines = user_profile.get("routines", [])
+    prefs    = user_profile.get("preferences", [])
+
+    if routines:
+        lines.append("## General Routines\n")
+        for r in routines:
+            lines.append(f"• {r}")
+        lines.append("")
+
+    if prefs:
+        lines.append("## Explicit Preferences\n")
+        for p in prefs:
+            lines.append(f"• {p}")
+        lines.append("")
+
+    if not routines and not prefs and not active_trip:
+        lines.append("_No profile data has been learned yet._\n")
+
+    # ── Audit Log ─────────────────────────────────────────────────────────────
+    if changelog:
+        lines.append("## System Audit Log (Temporal Tracking)\n")
+        grouped: dict = defaultdict(list)
+        for log in changelog:
+            date_str = log.get("date", "Unknown Date")
             try:
                 dt = datetime.strptime(date_str, "%Y-%m-%d")
-                friendly_date = dt.strftime("%B %d")
+                friendly = dt.strftime("%B %d, %Y")
             except ValueError:
-                friendly_date = date_str
-            grouped[friendly_date].append(log.get('action', ''))
-            
+                friendly = date_str
+            grouped[friendly].append(log.get("action", ""))
+
         for d, actions in grouped.items():
-            summary_text += f"\n## Date {d}\n"
+            lines.append(f"### {d}")
             for a in actions:
                 a_lower = a.lower()
-                prefix = "Update"
-                if "delete" in a_lower or "remove" in a_lower or "cancel" in a_lower:
-                    prefix = "Delete"
-                elif "add" in a_lower or "book" in a_lower:
-                    prefix = "Add"
-                    
+                if any(w in a_lower for w in ["delete", "remove", "cancel"]):
+                    prefix = "🗑 Delete"
+                elif any(w in a_lower for w in ["update", "change", "modify"]):
+                    prefix = "✏️ Update"
+                else:
+                    prefix = "➕ Add"
                 parts = a.split(":", 1)
                 val = parts[1].strip() if len(parts) == 2 else a
-                summary_text += f"# {prefix} : {val}\n"
-            summary_text += "\n"
-            
-    if not req.user_profile.get("routines") and not req.user_profile.get("preferences"):
-        summary_text += "No routines or preferences have been learned yet."
-        
-    return {"summary": summary_text}
+                lines.append(f"- {prefix}: {val}")
+            lines.append("")
+
+    return {"summary": "\n".join(lines)}
 
 
 # -----------------------------------------------------------------------------
@@ -184,8 +257,19 @@ async def chat_websocket(websocket: WebSocket):
     logger.info(f"WebSocket connected from {websocket.client}")
 
     graph = get_graph()
+    
+    # Check for session_id in query params or initial message
+    # For now, we wait for the first message to possibly contain a session_id
+    # or we generate one if missing.
+    session_id = str(uuid.uuid4())
     state = initial_state()
     loop = asyncio.get_running_loop()
+
+    # Inform the frontend of the initial session_id
+    await websocket.send_json({
+        "type": "session_update",
+        "session_id": session_id
+    })
 
     # Emitter: synchronous-from-graph, but schedules the async send on the loop.
     def emit(event: dict) -> None:
@@ -220,12 +304,40 @@ async def chat_websocket(websocket: WebSocket):
                 })
                 continue
 
+            # Handle session identity
+            if msg.get("session_id"):
+                provided_id = msg["session_id"]
+                if provided_id != session_id:
+                    existing = storage.get_session_state(provided_id)
+                    if existing:
+                        session_id = provided_id
+                        state["messages"] = existing["messages"]
+                        state["memory"] = existing["memory"]
+                        state["compression_history"] = existing["compression_history"]
+                        state["turn_number"] = len(state["messages"])
+                        logger.info(f"Identified existing session: {session_id}")
+                    else:
+                        # If not found, we keep current session_id or set it to provided_id as new
+                        session_id = provided_id
+                        logger.info(f"Starting new session with ID: {session_id}")
+            
+            if msg["type"] == "identify":
+                # Responding with session_update confirms acknowledgement
+                await websocket.send_json({
+                    "type": "session_update",
+                    "session_id": session_id,
+                    "turn_number": state.get("turn_number", 0)
+                })
+                continue
+
             if msg["type"] == "reset_session":
+                session_id = str(uuid.uuid4())
                 state = initial_state()
                 await websocket.send_json({
                     "type": "assistant_message",
                     "text": "[Session reset]",
                     "turn_number": 0,
+                    "session_id": session_id
                 })
                 continue
 
@@ -240,6 +352,18 @@ async def chat_websocket(websocket: WebSocket):
                         None,
                         lambda: graph.invoke(state, text, emit),
                     )
+                    # Persist state after turn
+                    state_to_save = dict(state)
+                    state_to_save["id"] = session_id
+                    storage.save_session(session_id, state_to_save)
+                    logger.info(f"Saved session {session_id} after Turn {state.get('turn_number')}")
+                    
+                    # Send updated session info
+                    await websocket.send_json({
+                        "type": "session_update",
+                        "session_id": session_id,
+                        "turn_number": state.get("turn_number", 0)
+                    })
                 except Exception as e:
                     logger.exception("Graph invocation failed")
                     await websocket.send_json({

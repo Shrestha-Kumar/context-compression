@@ -3,27 +3,39 @@ import Spline from '@splinetool/react-spline';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/appStore';
+import { SplineErrorBoundary } from './SplineErrorBoundary';
+import { useRef } from 'react';
 
 export function TransitionOverlay() {
   const { isTransitioning, targetRoute, endTransition } = useAppStore();
   const navigate = useNavigate();
+  const activeTimers = useRef<boolean>(false);
 
   useEffect(() => {
-    if (isTransitioning && targetRoute) {
+    if (isTransitioning && targetRoute && !activeTimers.current) {
+      activeTimers.current = true;
+      
       // Stage 3 -> Stage 4: After Spline drops in and waits, push the route.
       const routeTimer = setTimeout(() => {
         navigate(targetRoute);
-      }, 2500); // Route visually changes underneath exactly at 2.5s.
+      }, 1500); // Snappier 1.5s load.
 
       // Release overlay.
       const finishTimer = setTimeout(() => {
         endTransition();
-      }, 4000); // 4 seconds total transition lock.
+        activeTimers.current = false;
+      }, 2500); // 2.5s total transition lock.
 
       return () => {
+        // We only clear if unmounted during transition, but generally let them fire.
         clearTimeout(routeTimer);
         clearTimeout(finishTimer);
+        activeTimers.current = false;
       };
+    }
+    
+    if (!isTransitioning) {
+      activeTimers.current = false;
     }
   }, [isTransitioning, targetRoute, navigate, endTransition]);
 
@@ -45,7 +57,9 @@ export function TransitionOverlay() {
             exit={{ scale: 1.1, opacity: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <Spline scene="https://prod.spline.design/3PFOEhXBsBl8HlYU/scene.splinecode" />
+            <SplineErrorBoundary>
+              <Spline scene="https://prod.spline.design/3PFOEhXBsBl8HlYU/scene.splinecode" />
+            </SplineErrorBoundary>
           </motion.div>
         </motion.div>
       )}
