@@ -173,65 +173,76 @@ async def generate_summary(req: SummaryRequest):
     lines = ["# User Travel Profile Summary\n"]
 
     # ── Active Trip ──────────────────────────────────────────────────────────
-    if active_trip and any(active_trip.values()):
+    if isinstance(active_trip, dict) and any(active_trip.values()):
         lines.append("## Active Trip\n")
-        dates = active_trip.get("dates", {})
-        dests = active_trip.get("destinations", [])
-        bookings = active_trip.get("bookings", [])
+        dates = active_trip.get("dates") or {}
+        dests = active_trip.get("destinations") or []
+        bookings = active_trip.get("bookings") or []
         budget = active_trip.get("budget")
 
-        if dests:
-            lines.append(f"• **Destinations:** {', '.join(dests)}")
-        if dates:
+        if isinstance(dests, list) and dests:
+            # Safety: ensure all dests are strings
+            dest_strs = [str(d) for d in dests if d]
+            if dest_strs:
+                lines.append(f"• **Destinations:** {', '.join(dest_strs)}")
+        
+        if isinstance(dates, dict) and dates:
             start = dates.get("start") or dates.get("departure", "")
             end   = dates.get("end")   or dates.get("return", "")
             if start or end:
                 lines.append(f"• **Dates:** {start} → {end}")
+        
         if budget:
             lines.append(f"• **Budget cap:** ${budget}")
-        if bookings:
+            
+        if isinstance(bookings, list) and bookings:
             for b in bookings:
+                if not isinstance(b, dict): continue
                 code = b.get("code", "")
                 btype = b.get("type", "booking")
                 notes = b.get("notes", "")
-                lines.append(f"• **{btype.capitalize()}:** {code} {('— ' + notes) if notes else ''}")
+                lines.append(f"• **{str(btype).capitalize()}:** {code} {('— ' + str(notes)) if notes else ''}")
         lines.append("")
 
     # ── User Profile ─────────────────────────────────────────────────────────
-    routines = user_profile.get("routines", [])
-    prefs    = user_profile.get("preferences", [])
+    if isinstance(user_profile, dict):
+        routines = user_profile.get("routines") or []
+        prefs    = user_profile.get("preferences") or []
 
-    if routines:
-        lines.append("## General Routines\n")
-        for r in routines:
-            lines.append(f"• {r}")
-        lines.append("")
+        if isinstance(routines, list) and routines:
+            lines.append("## General Routines\n")
+            for r in routines:
+                lines.append(f"• {str(r)}")
+            lines.append("")
 
-    if prefs:
-        lines.append("## Explicit Preferences\n")
-        for p in prefs:
-            lines.append(f"• {p}")
-        lines.append("")
+        if isinstance(prefs, list) and prefs:
+            lines.append("## Explicit Preferences\n")
+            for p in prefs:
+                lines.append(f"• {str(p)}")
+            lines.append("")
 
     if not routines and not prefs and not active_trip:
         lines.append("_No profile data has been learned yet._\n")
 
     # ── Audit Log ─────────────────────────────────────────────────────────────
-    if changelog:
+    if isinstance(changelog, list) and changelog:
         lines.append("## System Audit Log (Temporal Tracking)\n")
         grouped: dict = defaultdict(list)
         for log in changelog:
-            date_str = log.get("date", "Unknown Date")
+            if not isinstance(log, dict): continue
+            date_str = str(log.get("date", "Unknown Date"))
             try:
-                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                # Expecting YYYY-MM-DD
+                dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
                 friendly = dt.strftime("%B %d, %Y")
-            except ValueError:
+            except (ValueError, TypeError):
                 friendly = date_str
-            grouped[friendly].append(log.get("action", ""))
+            grouped[friendly].append(str(log.get("action", "")))
 
         for d, actions in grouped.items():
             lines.append(f"### {d}")
             for a in actions:
+                if not a: continue
                 a_lower = a.lower()
                 if any(w in a_lower for w in ["delete", "remove", "cancel"]):
                     prefix = "🗑 Delete"
