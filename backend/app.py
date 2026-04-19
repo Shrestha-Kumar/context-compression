@@ -191,6 +191,8 @@ async def generate_summary(req: SummaryRequest):
             end   = dates.get("end")   or dates.get("return", "")
             if start or end:
                 lines.append(f"• **Dates:** {start} → {end}")
+        elif isinstance(dates, (list, str)) and dates:
+            lines.append(f"• **Dates:** {str(dates)}")
         
         if budget:
             lines.append(f"• **Budget cap:** ${budget}")
