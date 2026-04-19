@@ -34,8 +34,11 @@ export function WebSocketProvider({ url }: { url: string }) {
             
           case 'compression_stats':
             updateMetrics({
-              compRatio: data.ratio || data.ratio_percent,
-              tokens: data.compressed_tokens || data.window_tokens,
+              compRatio: data.ratio || 0,
+              tokens: data.compressed_tokens || 0,
+              vram_mb: data.vram_mb || 0,
+              raw_tokens: data.raw_tokens || 0,
+              compressed_tokens: data.compressed_tokens || 0,
               turn: `#0${data.turn_number || 0}`
             });
             break;

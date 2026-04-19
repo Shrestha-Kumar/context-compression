@@ -96,7 +96,9 @@ export function MetricsPanel({ collapsed, onToggleCollapse, width, onResizeStart
             </div>
             <div className="bg-surface p-4 border border-surface-dim shadow-sm">
               <span className="font-bold text-[9px] text-[#888] uppercase tracking-[0.2em]">VRAM</span>
-              <div className="text-2xl font-black text-ink mt-1 tracking-tighter">1.2/6.0</div>
+              <div className="text-2xl font-black text-ink mt-1 tracking-tighter">
+                {(metrics.vram_mb / 1024).toFixed(1)}/6.0
+              </div>
             </div>
             <div className="bg-surface p-4 border border-surface-dim shadow-sm">
               <span className="font-bold text-[9px] text-[#888] uppercase tracking-[0.2em]">Turn</span>

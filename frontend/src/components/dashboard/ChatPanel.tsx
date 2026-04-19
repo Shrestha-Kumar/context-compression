@@ -4,7 +4,7 @@ import { useAppStore } from "../../store/appStore";
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
-  const { messages, appendMessage, sendMessage } = useAppStore();
+  const { messages, appendMessage, sendMessage, metrics } = useAppStore();
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -38,19 +38,22 @@ export function ChatPanel() {
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 bg-black border border-black animate-pulse"></span>
             <span className="font-sans font-bold text-[9px] text-black tracking-[0.2em] uppercase">
-              COMPRESSING... 62% reduction
+              COMPRESSING... {Math.round(metrics.compRatio * 100)}% reduction
             </span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2 bg-white border border-surface-dim px-2 py-1 font-bold text-[10px] text-ink">
-            <span>1,247 / 2,048</span>
+            <span>{metrics.compressed_tokens.toLocaleString()} / {metrics.raw_tokens.toLocaleString()}</span>
             <div className="w-12 h-2 bg-surface-dim overflow-hidden">
-              <div className="h-full bg-ink" style={{ width: "60%" }}></div>
+              <div 
+                className="h-full bg-ink transition-all duration-500" 
+                style={{ width: `${metrics.raw_tokens > 0 ? (metrics.compressed_tokens / metrics.raw_tokens) * 100 : 0}%` }} 
+              ></div>
             </div>
           </div>
           <span className="px-2 py-0.5 bg-ink text-surface text-[9px] font-bold uppercase tracking-widest">
-            VRAM: 1.2GB
+            VRAM: {(metrics.vram_mb / 1024).toFixed(1)}GB
           </span>
         </div>
       </div>
