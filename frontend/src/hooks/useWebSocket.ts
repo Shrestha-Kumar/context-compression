@@ -12,11 +12,16 @@ export function WebSocketProvider({ url }: { url: string }) {
 
     ws.current.onopen = () => {
       setWsConnected(true);
-      // If we have a currentSessionId, inform the backend immediately
+      // Re-identify whenever we connect
       if (currentSessionId) {
         ws.current?.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
       }
     };
+
+    // Reactive identity: if session ID changes while socket is open, tell the backend
+    if (ws.current?.readyState === WebSocket.OPEN && currentSessionId) {
+      ws.current.send(JSON.stringify({ type: 'identify', session_id: currentSessionId }));
+    }
 
     ws.current.onmessage = (event) => {
       try {
@@ -83,7 +88,7 @@ export function WebSocketProvider({ url }: { url: string }) {
       setTimeout(connect, 3000);
     };
 
-  }, [url, appendMessage, updateMetrics, setWsConnected]);
+  }, [url, appendMessage, updateMetrics, setWsConnected, currentSessionId]); // Added currentSessionId dependency
 
   useEffect(() => {
     connect();
@@ -100,7 +105,7 @@ export function WebSocketProvider({ url }: { url: string }) {
         session_id: currentSessionId 
       }));
     }
-  }, []);
+  }, [currentSessionId]); // Fixed stale closure
 
   useEffect(() => {
     _setSendMessage(sendMessage);

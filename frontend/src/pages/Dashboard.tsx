@@ -43,7 +43,21 @@ export default function Dashboard() {
             
             setMessages(restoredMessages);
             if (data.memory) updateConstraints(data.memory);
-            // Optionally restore latest metrics if saved
+            
+            // Restore latest metrics if available
+            if (data.compression_history && data.compression_history.length > 0) {
+              const latest = data.compression_history[data.compression_history.length - 1];
+              updateMetrics({
+                compRatio: latest.ratio || 0,
+                tokens: latest.compressed_tokens || 0,
+                turn: `#0${latest.turn_number || 0}`,
+                raw_tokens: latest.raw_tokens || 0,
+                compressed_tokens: latest.compressed_tokens || 0
+              });
+            } else {
+              // Reset if no history
+              updateMetrics({ compRatio: 0, tokens: 0, turn: "#00", raw_tokens: 0, compressed_tokens: 0 });
+            }
           }
         })
         .catch(err => console.error("Restoration failed:", err));
