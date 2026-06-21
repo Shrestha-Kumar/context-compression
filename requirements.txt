@@ -7,7 +7,7 @@
 torch
 transformers
 accelerate
-# bitsandbytes>=0.43.0
+bitsandbytes>=0.43.0
 sentencepiece>=0.2.0
 tokenizers>=0.19.0
 
