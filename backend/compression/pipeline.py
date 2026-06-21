@@ -52,7 +52,7 @@ class CompressionPipeline:
         hist_lines.append(f"User: {user_query}")
         hist_str = "\n".join(hist_lines)
         
-        system_prompt = "You are an intelligent Memory State Tracker. Given a conversation, evaluate changes to the persistent states step-by-step using a <thought> block. Then, extract the final state (active trips, routines, preferences) and record all additions, updates, and deletions into the changelog array. Always output the valid JSON object directly after the <thought> block."
+        system_prompt = "You are an intelligent Memory State Tracker. Evaluate changes using a <thought> block. Output exactly matching this JSON schema: {\"active_trip\": {\"destinations\": [], \"dates\": {}, \"bookings\": [], \"budget\": null}, \"user_profile\": {\"routines\": [], \"preferences\": []}, \"changelog\": [{\"date\": \"YYYY-MM-DD\", \"action\": \"...\"}]}"
         
         updated_memory = current_constraints
         tier_used = "llm_cot"

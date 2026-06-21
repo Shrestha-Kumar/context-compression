@@ -4,14 +4,15 @@
 #   - Kaggle P100 (16GB, CUDA 12.x)
 
 # Core inference stack
-torch>=2.3.0,<2.6.0
-transformers>=4.44.0,<4.50.0
-accelerate>=0.33.0
+torch
+transformers
+accelerate
 bitsandbytes>=0.43.0
 sentencepiece>=0.2.0
 tokenizers>=0.19.0
 
 # Agent orchestration
+langchain>=0.3.0,<0.4.0
 langgraph>=0.2.0,<0.3.0
 langchain-core>=0.3.0,<0.4.0
 
@@ -22,3 +23,7 @@ websockets>=12.0
 
 # Utilities
 pydantic>=2.7.0
+
+# Evaluation & visualisation
+matplotlib>=3.7.0
+duckduckgo_search>=7.0.0
