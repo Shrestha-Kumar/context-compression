@@ -49,6 +49,7 @@ frontend/dist/
 backend/build/
 *.egg-info/
 frontend/.vite/
+colab_project.zip
 
 # Scrap/Debug files
 stitch_mcp.json
