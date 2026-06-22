@@ -60,7 +60,7 @@ We broke from generic frameworks to embrace a highly functional, pure `React` en
 ### 1. Repository Initialization
 Clone the repository:
 ```bash
-git clone <your-repo>
+git clone https://github.com/Shrestha-Kumar/context-compression.git
 cd context-compression-module
 ```
 
