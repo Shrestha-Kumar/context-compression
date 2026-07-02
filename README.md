@@ -3,7 +3,7 @@
   <h1 align="center">KINETIC_SYS | Context Compression Module</h1>
   <p align="center">
     <strong>Infinite Context. Zero Latency.</strong><br/>
-    A brutally efficient LLM compression system engineered for the Hack 60 Advanced AI Hackathon.
+    A efficient LLM compression system engineered for the Hack 60 Advanced AI Hackathon.
   </p>
 
   <p align="center">
